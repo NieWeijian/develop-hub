@@ -11,8 +11,8 @@ from .models import TestRound, TestRoundEvent, TestRoundStatus, TestCase, TestBe
 from .db import SessionLocal
 
 from .basic_cases import ACTIVE_CODES
-SWITCH_CODES=tuple(code for code in json.loads((ROOT/'switch-codes.json').read_text()) if code in ACTIVE_CODES)
-PACKAGE=['worker.py','quick_tests.py','switch_runtime.py','frame_images.py','test_runtime.py','rv1126b.py','host-capture','test-bins/ctl-trace-1/uvc_host_ctl']
+QUICK_CODES=tuple(code for code in json.loads((ROOT/'switch-codes.json').read_text())+json.loads((ROOT/'info-codes.json').read_text()) if code in ACTIVE_CODES)
+PACKAGE=['worker.py','quick_tests.py','switch_runtime.py','telemetry_runtime.py','frame_images.py','test_runtime.py','rv1126b.py','host-capture','host-imu','info-codes.json','test-bins/ctl-trace-1/uvc_host_ctl']
 
 async def create(payload,db,workflow):
     from .test_workbench_api import product_query, round_query, next_round_number, bench_devices
@@ -25,8 +25,8 @@ async def create(payload,db,workflow):
     cases=[]
     for cid in payload.test_case_ids:
         case=db.get(TestCase,cid)
-        if not case or not case.enabled or case.code not in SWITCH_CODES:raise HTTPException(422,'Developer mode currently supports switching cases only')
-        if payload.test_case_parameters.get(cid):raise HTTPException(422,'These switching cases do not accept parameters')
+        if not case or not case.enabled or case.code not in QUICK_CODES:raise HTTPException(422,'Developer mode supports switching and information cases')
+        if payload.test_case_parameters.get(cid):raise HTTPException(422,'These cases do not accept parameters')
         cases.append(dict(id=cid,code=case.code,name=case.name,category=case.category,adapter=definition(case.code),parameters={}))
     if set(payload.test_case_parameters)-set(payload.test_case_ids):raise HTTPException(422,'Unselected case parameters')
     devices=await bench_devices(bench.id,'RV1126B',db,workflow)

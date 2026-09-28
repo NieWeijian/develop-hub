@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[3]/'bench'
-CODES=('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP','SWITCH-ROTATE-CONTROL')+tuple(json.loads((ROOT/'switch-codes.json').read_text()))
+CODES=('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP','SWITCH-ROTATE-CONTROL')+tuple(json.loads((ROOT/'switch-codes.json').read_text()))+tuple(json.loads((ROOT/'info-codes.json').read_text()))
 
 RETIRED_CODES=('SWITCH-ALGO-ASYNC', 'SWITCH-ALGO-DENOISE', 'SWITCH-ALGO-ITER', 'SWITCH-IR-BTNR')
 ACTIVE_CODES=tuple(code for code in CODES if code not in RETIRED_CODES)
@@ -21,6 +21,8 @@ def definition(code):
     if code in json.loads((ROOT/'switch-codes.json').read_text()):
         data['support_sha256']={name:sha(ROOT/name) for name in ('switch_runtime.py','frame_images.py','host-capture','rv1126b.py')}
         data['runtime_sha256']=sha(ROOT/'test_runtime.py')
+    if code in json.loads((ROOT/'info-codes.json').read_text()):
+        data['support_sha256']={name:sha(ROOT/name) for name in ('telemetry_runtime.py','switch_runtime.py','frame_images.py','host-capture','host-imu','rv1126b.py')}
     return data
 
 

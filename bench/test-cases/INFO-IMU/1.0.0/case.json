@@ -1,0 +1,18 @@
+{
+  "id": "INFO-IMU",
+  "version": "1.0.0",
+  "name": "IMU 上报与实际样本",
+  "category": "basic",
+  "scenario": "telemetry",
+  "risk_level": "read_only",
+  "command": "imu-status + HID samples",
+  "entrypoint": "test-cases/INFO-IMU/1.0.0/run.py",
+  "timeout_seconds": 180,
+  "parameters": {},
+  "assertions": [
+    "IMU 应用运行且 IIO 节点存在",
+    "同一模组 HID 有实际连续样本"
+  ],
+  "scope": "当前固件、锁定 USB 设备；仅检查上报和短时有效出流，不做长期趋势或性能阈值",
+  "revision": "2026-09-28-info"
+}

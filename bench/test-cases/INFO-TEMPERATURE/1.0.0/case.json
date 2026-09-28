@@ -1,0 +1,18 @@
+{
+  "id": "INFO-TEMPERATURE",
+  "version": "1.0.0",
+  "name": "温度上报与出流",
+  "category": "basic",
+  "scenario": "telemetry",
+  "risk_level": "read_only",
+  "command": "get-temperature",
+  "entrypoint": "test-cases/INFO-TEMPERATURE/1.0.0/run.py",
+  "timeout_seconds": 180,
+  "parameters": {},
+  "assertions": [
+    "SoC、IMU、TX、左 IR、右 IR、RGB 六路温度在出流时均返回有效数值",
+    "当前模式各路可正常出流"
+  ],
+  "scope": "当前固件、锁定 USB 设备；仅检查上报和短时有效出流，不做长期趋势或性能阈值",
+  "revision": "2026-09-28-info"
+}

@@ -213,46 +213,37 @@
         {
           "code": "INFO-PING",
           "name": "控制链路与 RTT",
-          "capability": "待适配",
+          "capability": "已接入 1.0.0",
           "tool": "ping",
-          "matrix": "空闲 / 开流 / 并发控制",
-          "assertion": "统计请求数、成功率、超时、p50/p95/p99；XU ping 不等于网络 ICMP",
+          "matrix": "空闲 10 次 / 当前模式开流 10 次",
+          "assertion": "每次 XU ping 返回有效 RTT；记录原始样本和 p50/p95/p99。长期稳定性另测。",
           "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
         },
         {
           "code": "INFO-SENSORS",
           "name": "Sensor / VICAP / ISP 上报",
-          "capability": "待适配",
+          "capability": "已接入 1.0.0",
           "tool": "sensor-status / vicap-status / isp-status",
-          "matrix": "支持硬件型号与各设备模式",
-          "assertion": "核对枚举数量、型号和活跃状态；不能仅搜索命令执行成功",
+          "matrix": "当前设备模式开流期间",
+          "assertion": "三路 SC132GS、VICAP 和 ISP 状态有效，当前模式各路正常出流。",
           "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
         },
         {
           "code": "INFO-IMU",
           "name": "IMU 上报",
-          "capability": "待适配",
+          "capability": "已接入 1.0.0",
           "tool": "imu-status + imu",
-          "matrix": "进程 / IIO / 实际样本",
-          "assertion": "进程存活、型号和实际数据三者一致，报告缺样和时间异常",
+          "matrix": "进程 / IIO / 同一 USB 端口 HID 实际样本",
+          "assertion": "进程运行、型号枚举、实际样本窗口均有证据。",
           "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
         },
         {
           "code": "INFO-TEMPERATURE",
-          "name": "温度与帧率长期监视",
-          "capability": "待适配",
+          "name": "温度上报与出流",
+          "capability": "已接入 1.0.0",
           "tool": "get-temperature + stream",
-          "matrix": "产品定义采样间隔与持续时间",
-          "assertion": "保存带时间戳的温度/FPS 曲线、峰值、超限时长；缺报或恒定占位值单独判定",
-          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
-        },
-        {
-          "code": "INFO-IDENTITY",
-          "name": "设备身份与版本一致性",
-          "capability": "待适配",
-          "tool": "get-cpu-serial / get-version / health",
-          "matrix": "烧录前后、重枚举后",
-          "assertion": "CPU 序列号、物理端口、运行 commit 与本轮锁定一致；不得以全零 UVC serial 绑定",
+          "matrix": "当前设备模式开流，六路温度各读取三次",
+          "assertion": "SoC、IMU、TX、IR 左右、RGB 均有有效温度读数；不测温度阈值或长期 FPS。",
           "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
         }
       ]
