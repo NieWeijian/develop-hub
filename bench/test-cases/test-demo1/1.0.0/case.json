@@ -1,0 +1,10 @@
+{
+  "id": "test-demo1",
+  "version": "1.0.0",
+  "name": "读取模组 SN",
+  "timeout_seconds": 35,
+  "tools": ["uvc_host_ctl"],
+  "preconditions": ["one RMSL UVC module"],
+  "parameters": {"expected_sn": "optional exact match"},
+  "assertions": ["SN format", "optional SN identity"]
+}

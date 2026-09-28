@@ -1,0 +1,17 @@
+[Unit]
+Description=Develop Hub QA Controller
+After=network.target
+
+[Service]
+Type=simple
+User=linaro
+WorkingDirectory=/home/linaro/develop-hub-qa
+ExecStart=/home/linaro/develop-hub-qa/qa-controller /home/linaro/develop-hub-qa/jobs /home/linaro/develop-hub-qa/worker.py
+Restart=always
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=15
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

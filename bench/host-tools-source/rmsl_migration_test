@@ -1,0 +1,171 @@
+#!/bin/bash
+# RK3572 feature-contract regression against the RV1126B factory-V2.0.4~2.0.6 baseline.
+
+set -u
+
+ROOT="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+BIN="${RMSL_TEST_BIN_DIR:-$ROOT/bin}"
+CTL="$BIN/uvc_host_ctl"
+STREAM="$BIN/uvc_host_stream"
+DEVICE=""
+STATEFUL=0
+DURATION=10
+FAIL=0
+
+usage() {
+    cat <<'EOF'
+Usage: rmsl_migration_test [--device /dev/videoN] [--duration SEC] [--stateful]
+
+Default is read-only: control baseline, temperature query, and strict V2 frame-header
+metadata validation in the current device mode.
+
+--stateful additionally switches to rgb+depth+ir, verifies all three streams, tests
+projector-current persistence across reboot, and restores the original mode/current.
+It reboots and changes persistent parameters; run only after confirming the target module.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --device) shift; DEVICE="${1:?missing device}" ;;
+        --duration) shift; DURATION="${1:?missing duration}" ;;
+        --stateful) STATEFUL=1 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+    shift
+done
+
+case "$DURATION" in
+    ''|*[!0-9]*|0) echo "invalid duration: $DURATION" >&2; exit 2 ;;
+esac
+
+CTL_DEVICE=()
+STREAM_DEVICE=()
+if [ -n "$DEVICE" ]; then
+    CTL_DEVICE=(--device "$DEVICE")
+    STREAM_DEVICE=(--device "$DEVICE")
+fi
+
+run_case() {
+    local name="$1"
+    shift
+    printf '\n=== %s ===\n' "$name"
+    if "$@"; then
+        printf 'CASE: %s: PASS\n' "$name"
+    else
+        printf 'CASE: %s: FAIL\n' "$name"
+        FAIL=1
+    fi
+}
+
+ctl() {
+    "$CTL" "$@" "${CTL_DEVICE[@]}"
+}
+
+wait_ctl() {
+    local i=0
+    while [ "$i" -lt 180 ]; do
+        ctl ping 1 >/dev/null 2>&1 && return 0
+        sleep 1
+        i=$((i + 1))
+    done
+    return 1
+}
+
+current_mode() {
+    ctl get-device-mode 2>/dev/null | tail -1
+}
+
+stream_contract() {
+    local mode="$1"
+    "$STREAM" "$mode" --duration "$DURATION" --require-header --require-exposure \
+        "${STREAM_DEVICE[@]}"
+}
+
+temperature_contract() {
+    local out
+    out="$(ctl get-temperature 2>&1)" || { printf '%s\n' "$out"; return 1; }
+    printf '%s\n' "$out"
+    for key in soc imu tx ir_l ir_r rgb; do
+        printf '%s\n' "$out" | grep -Eq "(^|[[:space:]])${key}=" || return 1
+    done
+}
+
+projector_current() {
+    ctl get-param 2>/dev/null | awk '
+        /^\[projector\]/{inside=1; next}
+        /^\[/{inside=0}
+        inside && /^[[:space:]]*current[[:space:]]*=/{
+            sub(/.*=[[:space:]]*/, ""); print; exit
+        }'
+}
+
+projector_persistence_contract() {
+    local original target restored after_set after_reboot
+    original="$(projector_current)"
+    target=600
+    [ "$original" = 600 ] && target=700
+    restored="$original"
+    case "$restored" in
+        100|200|300|400|500|600|700|800|900|1000) ;;
+        *) restored=500 ;;
+    esac
+
+    ctl set-pro-current "$target" || return 1
+    sleep 2
+    after_set="$(projector_current)"
+    if [ "$after_set" != "$target" ]; then
+        echo "projector current not persisted after SET: got=${after_set:-empty}, want=$target"
+        ctl set-pro-current "$restored" >/dev/null 2>&1 || true
+        return 1
+    fi
+    ctl reboot >/dev/null || return 1
+    wait_ctl || return 1
+    after_reboot="$(projector_current)"
+    ctl set-pro-current "$restored" >/dev/null 2>&1 || true
+    echo "projector current: original=${original:-empty} set=$after_set reboot=$after_reboot restored=$restored"
+    [ "$after_reboot" = "$target" ]
+}
+
+if [ ! -x "$CTL" ] || [ ! -x "$STREAM" ]; then
+    echo "missing host binaries under $BIN; build/package tools first" >&2
+    exit 2
+fi
+
+run_case "control baseline" ctl --check
+run_case "device temperature V2.0.5" temperature_contract
+
+ORIGINAL_MODE="$(current_mode)"
+case "$ORIGINAL_MODE" in
+    rgb+depth|rgb+ir|rgb+depth+ir)
+        run_case "strict V2 header metadata ($ORIGINAL_MODE)" stream_contract "$ORIGINAL_MODE"
+        ;;
+    *)
+        echo "cannot determine current device mode: ${ORIGINAL_MODE:-empty}"
+        FAIL=1
+        ;;
+esac
+
+if [ "$STATEFUL" -eq 1 ]; then
+    run_case "switch to rgb+depth+ir" ctl set-device-mode rgb+depth+ir
+    run_case "control recovery after triple-mode reboot" wait_ctl
+    run_case "rgb+depth+ir simultaneous streams" stream_contract rgb+depth+ir
+    run_case "projector current persistence" projector_persistence_contract
+
+    if [ -n "$ORIGINAL_MODE" ] && [ "$(current_mode)" != "$ORIGINAL_MODE" ]; then
+        run_case "restore device mode $ORIGINAL_MODE" ctl set-device-mode "$ORIGINAL_MODE"
+        run_case "control recovery after mode restore" wait_ctl
+    fi
+else
+    echo
+    echo "STATEFUL CASES: SKIP (use --stateful after confirming target/reboot permission)"
+fi
+
+if [ "$FAIL" -eq 0 ]; then
+    echo "RESULT: PASS"
+    exit 0
+fi
+echo "RESULT: FAIL"
+exit 1
+

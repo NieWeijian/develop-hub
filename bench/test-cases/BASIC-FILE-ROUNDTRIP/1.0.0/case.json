@@ -1,0 +1,27 @@
+{
+  "id": "BASIC-FILE-ROUNDTRIP",
+  "version": "1.0.0",
+  "name": "文件上传下载校验",
+  "category": "basic",
+  "risk_level": "state_change",
+  "command": "file-put / file-get",
+  "entrypoint": "test-cases/BASIC-FILE-ROUNDTRIP/1.0.0/run.py",
+  "timeout_seconds": 120,
+  "parameters": {},
+  "preconditions": [
+    "matching physical USB port",
+    "firmware commit verified",
+    "XU available"
+  ],
+  "assertions": [
+    "upload succeeded",
+    "download size and SHA-256 match"
+  ],
+  "files": [
+    {
+      "path": "fixtures/payload.bin",
+      "size_bytes": 1024,
+      "sha256": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9"
+    }
+  ]
+}

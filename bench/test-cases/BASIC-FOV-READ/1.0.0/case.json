@@ -1,0 +1,19 @@
+{
+  "id": "BASIC-FOV-READ",
+  "version": "1.0.0",
+  "name": "读取 FOV",
+  "category": "basic",
+  "risk_level": "read_only",
+  "command": "get-fov",
+  "entrypoint": "test-cases/BASIC-FOV-READ/1.0.0/run.py",
+  "timeout_seconds": 120,
+  "parameters": {},
+  "preconditions": [
+    "matching physical USB port",
+    "firmware commit verified",
+    "XU available"
+  ],
+  "assertions": [
+    "FOV finite and in supported list"
+  ]
+}

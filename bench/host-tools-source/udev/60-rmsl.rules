@@ -1,0 +1,12 @@
+# RMSL321 structured-light module - CDC-ACM control channel
+#
+# Gives the ttyACM node world read/write and creates /dev/rmsl_ctl for a
+# single attached module. With multiple modules, the symlink is ambiguous -
+# use `rmsl_ctl --port /dev/ttyACMN` instead.
+#
+# Install:
+#   sudo cp udev/60-rmsl.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+
+SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="2207", ATTRS{idProduct}=="001a", MODE="0666", SYMLINK+="rmsl_ctl"
+SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="2207", ATTRS{idProduct}=="0018", MODE="0666", SYMLINK+="rmsl_ctl"

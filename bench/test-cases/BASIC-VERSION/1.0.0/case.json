@@ -1,0 +1,19 @@
+{
+  "id": "BASIC-VERSION",
+  "version": "1.0.0",
+  "name": "读取版本",
+  "category": "basic",
+  "risk_level": "read_only",
+  "command": "get-version",
+  "entrypoint": "test-cases/BASIC-VERSION/1.0.0/run.py",
+  "timeout_seconds": 120,
+  "parameters": {},
+  "preconditions": [
+    "matching physical USB port",
+    "firmware commit verified",
+    "XU available"
+  ],
+  "assertions": [
+    "version contains expected commit"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "test-demo2",
+  "version": "1.0.1",
+  "name": "RGB 和 DEPTH 出流帧率",
+  "timeout_seconds": 140,
+  "tools": [
+    "uvc_host_ctl",
+    "uvc_host_stream"
+  ],
+  "preconditions": [
+    "one RMSL UVC module",
+    "rgb+depth mode"
+  ],
+  "parameters": {
+    "duration_sec": "11..120; default 12",
+    "min_fps": "0..30; default 1"
+  },
+  "assertions": [
+    "two complete 5-second windows per stream",
+    "average fps",
+    "minimum window fps"
+  ]
+}

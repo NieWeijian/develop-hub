@@ -1,0 +1,26 @@
+{
+  "id": "BASIC-FOV-WRITE",
+  "version": "1.0.0",
+  "name": "设置 FOV 并恢复",
+  "category": "basic",
+  "risk_level": "state_change",
+  "command": "set-fov",
+  "entrypoint": "test-cases/BASIC-FOV-WRITE/1.0.0/run.py",
+  "timeout_seconds": 120,
+  "parameters": {
+    "target_fov": {
+      "type": "number",
+      "description": "可选，默认选择支持列表中的另一个 FOV"
+    }
+  },
+  "preconditions": [
+    "matching physical USB port",
+    "firmware commit verified",
+    "XU available"
+  ],
+  "assertions": [
+    "target is supported",
+    "set/get match",
+    "restore/get match"
+  ]
+}
