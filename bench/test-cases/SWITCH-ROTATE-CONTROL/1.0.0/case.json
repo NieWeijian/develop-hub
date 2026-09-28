@@ -1,0 +1,28 @@
+{
+  "id": "SWITCH-ROTATE-CONTROL",
+  "version": "1.0.0",
+  "name": "旋转开关控制与恢复（配置回读）",
+  "category": "basic",
+  "scenario": "switch",
+  "risk_level": "state_change",
+  "command": "get-rotate / set-rotate",
+  "entrypoint": "test-cases/SWITCH-ROTATE-CONTROL/1.0.0/run.py",
+  "timeout_seconds": 120,
+  "parameters": {},
+  "preconditions": [
+    "matching physical USB port",
+    "firmware commit verified",
+    "XU available"
+  ],
+  "assertions": [
+    "原值为合法旋转配置",
+    "分别切换 0/1 并回读一致",
+    "无论成功失败均恢复原值并验证",
+    "保存实际 XU 收发"
+  ],
+  "scope": "仅控制配置读写，不代表图像旋转效果通过；图像留证等待固件 tools dump 接口",
+  "evidence": {
+    "image_status": "tool_gap",
+    "reason": "现有 tools 无稳定帧 dump 命令"
+  }
+}

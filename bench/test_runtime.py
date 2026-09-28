@@ -36,13 +36,33 @@ class Case:
     def choices(self):
         text=self.call('supported-fov','get-fov-list')
         return [float(v) for v in text.split(':',1)[-1].split()]
+    def rotation(self, step):
+        text = self.call(step, 'get-rotate')
+        match = re.fullmatch(r'rotate: ([01]) \((normal|rotated)\)', text)
+        if not match or (match[1] == '0') != (match[2] == 'normal'):
+            raise RuntimeError('Invalid rotation response: ' + text)
+        return int(match[1])
     def run(self):
         restore=None
+        rotate_restore=None
         try:
             self.check('Tool SHA-256',self.data['tool_sha256'],digest(Path(self.data['tool'])),digest(Path(self.data['tool']))==self.data['tool_sha256'])
             if self.code=='BASIC-VERSION':
                 text=self.call('read-version','get-version')
                 self.check('Firmware version',self.data['commit'][:7],text,self.data['commit'][:7] in text)
+            elif self.code=='SWITCH-ROTATE-CONTROL':
+                if self.data.get('parameters'):
+                    raise RuntimeError('Rotation control case does not accept parameters')
+                original = self.rotation('save-rotate')
+                rotate_restore = original
+                self.result['scope'] = 'configuration_readback_only'
+                self.result['image_evidence'] = {'state':'unavailable', 'reason':'Firmware tools dump interface required'}
+                self.result['recovery'] = {'state':'pending', 'original':original}
+                self.save()
+                for target in (1-original, original):
+                    self.call('write-rotate-'+str(target), 'set-rotate', target)
+                    actual = self.rotation('verify-rotate-'+str(target))
+                    self.check('Rotate '+str(target)+' readback', target, actual, actual == target)
             elif self.code=='BASIC-FOV-READ':
                 actual=self.fov('read-fov');choices=self.choices()
                 self.check('FOV belongs to supported list',choices,actual,any(abs(actual-v)<=0.02 for v in choices))
@@ -73,6 +93,16 @@ class Case:
         except AssertionError as exc: self.result.update(outcome='failed',message=str(exc))
         except Exception as exc: self.result.update(outcome='error',message=str(exc))
         finally:
+            if rotate_restore is not None:
+                try:
+                    self.call('restore-rotate', 'set-rotate', rotate_restore)
+                    actual = self.rotation('verify-restore-rotate')
+                    restored = actual == rotate_restore
+                    self.result['recovery'] = {'state':'passed' if restored else 'failed', 'expected':rotate_restore, 'actual':actual}
+                    self.result['assertions'].append({'name':'Original rotation restored', 'expected':rotate_restore, 'actual':actual, 'passed':restored})
+                    if not restored: self.result['outcome'] = 'error'
+                except Exception as exc:
+                    self.result.update(outcome='error', recovery={'state':'failed','error':str(exc)})
             if restore is not None:
                 try:
                     self.call('restore-fov','set-fov',restore);time.sleep(0.5);actual=self.fov('verify-restore')

@@ -120,7 +120,7 @@ class Job:
         all_pass=True
         for index,item in enumerate(config['test_cases']):
             adapter=item.get('adapter') or {};code=adapter.get('id','')
-            if code not in ('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP'): raise RuntimeError('Unregistered test adapter')
+            if code not in ('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP','SWITCH-ROTATE-CONTROL'): raise RuntimeError('Unregistered test adapter')
             entry=root/'test-cases'/code/'1.0.0/run.py'
             if digest(tool)!=adapter['tool_sha256'] or digest(root/'test_runtime.py')!=adapter['runtime_sha256'] or digest(entry)!=adapter['entrypoint_sha256'] or digest(entry.parent/'case.json')!=adapter['definition_sha256']:
                 raise RuntimeError('Test package version/hash mismatch')

@@ -1,0 +1,338 @@
+{
+  "version": "0.2.0",
+  "source_commit": "4cfb935",
+  "reviewed_at": "2026-09-28",
+  "status": "design",
+  "scenarios": [
+    {
+      "id": "stream",
+      "icon": "◉",
+      "name": "数据流质量",
+      "cases": [
+        {
+          "code": "STREAM-QUALITY",
+          "name": "多流质量（RGB / Depth / IR）",
+          "capability": "待适配",
+          "tool": "固件出流 tools",
+          "matrix": "USB3；常用开流组合；默认5小时，可指定时长；USB2另列特殊场景",
+          "source": "用户确认配置；格式和 IR 完整尺寸待 tools 枚举确认",
+          "assertion": "同一框架统计各流 FPS、丢帧、延时与抖动；按配置目标帧率分别判定。RGB 640×352@10 未编码；Depth 640×352@10，格式待核实；IR 2560×…档位。"
+        }
+      ]
+    },
+    {
+      "id": "switch",
+      "icon": "⇄",
+      "name": "功能与模式切换",
+      "cases": [
+        {
+          "code": "SWITCH-RESOLUTION",
+          "name": "分辨率切换",
+          "capability": "等待 tools 接口",
+          "tool": "set-algo-mode / 取流",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：支持的分辨率枚举、实际帧尺寸/FPS 与稳定帧 dump；设备重枚举后的绑定能力"
+        },
+        {
+          "code": "SWITCH-DEVICE-MODE",
+          "name": "设备模式切换",
+          "capability": "等待 tools 接口",
+          "tool": "get/set-device-mode",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：模式能力枚举、重枚举身份绑定、各节点实际出流与稳定帧 dump"
+        },
+        {
+          "code": "SWITCH-ROTATE",
+          "name": "图像旋转开关",
+          "capability": "等待 tools 接口",
+          "tool": "get/set-rotate",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：稳定帧 dump；控制读写子项已独立实现"
+        },
+        {
+          "code": "SWITCH-RGB-BTNR",
+          "name": "RGB BTNR 开关",
+          "capability": "等待 tools 接口",
+          "tool": "get/set-rgb-btnr",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：指定设备开流、流就绪和稳定帧 dump；允许值/生效语义"
+        },
+        {
+          "code": "SWITCH-IR-BTNR",
+          "name": "IR BTNR 开关",
+          "capability": "等待 tools 接口",
+          "tool": "get/set-ir-btnr",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：指定设备开流、流就绪和稳定帧 dump；允许值/生效语义"
+        },
+        {
+          "code": "SWITCH-PROJECTOR",
+          "name": "投影仪开关",
+          "capability": "等待 tools 接口",
+          "tool": "set-projector",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：实际使能状态 getter（含 idle）及恢复语义、稳定 IR 帧 dump"
+        },
+        {
+          "code": "SWITCH-ALGO-ASYNC",
+          "name": "算法异步开关",
+          "capability": "等待 tools 接口",
+          "tool": "set-algo-async",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、允许值、稳定帧 dump"
+        },
+        {
+          "code": "SWITCH-ALGO-ITER",
+          "name": "算法迭代次数",
+          "capability": "等待 tools 接口",
+          "tool": "set-algo-iter",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、允许范围、稳定帧 dump"
+        },
+        {
+          "code": "SWITCH-ALGO-FPS",
+          "name": "算法帧率配置",
+          "capability": "等待 tools 接口",
+          "tool": "set-algo-fps",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、支持帧率与实测帧率、稳定帧 dump"
+        },
+        {
+          "code": "SWITCH-ALGO-MODEL",
+          "name": "算法模型类型",
+          "capability": "等待 tools 接口",
+          "tool": "set-algo-model-type",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、支持模型和恢复语义、稳定帧 dump"
+        },
+        {
+          "code": "SWITCH-ALGO-DENOISE",
+          "name": "算法去噪开关",
+          "capability": "等待 tools 接口",
+          "tool": "set-algo-denoise",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、允许值、稳定帧 dump"
+        },
+        {
+          "code": "SWITCH-ALGO-FULLSIZE",
+          "name": "算法全尺寸开关",
+          "capability": "等待 tools 接口",
+          "tool": "set-algo-full-size",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、允许值与实际尺寸、稳定帧 dump"
+        },
+        {
+          "code": "SWITCH-ALGO-UNCERTAIN",
+          "name": "算法 uncertain 阈值",
+          "capability": "等待 tools 接口",
+          "tool": "set-algo-uncertain",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、阈值范围/步进、稳定帧 dump"
+        },
+        {
+          "code": "SWITCH-ALGO-DISCONTINUE",
+          "name": "算法 discontinue 阈值",
+          "capability": "等待 tools 接口",
+          "tool": "set-algo-discontinue",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、阈值范围/步进、稳定帧 dump"
+        },
+        {
+          "code": "SWITCH-ALGO-UNCERTAIN-DELTA",
+          "name": "算法 uncertain-delta 阈值",
+          "capability": "等待 tools 接口",
+          "tool": "set-algo-uncertain-delta",
+          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
+          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、阈值范围/步进、稳定帧 dump"
+        }
+      ]
+    },
+    {
+      "id": "factory",
+      "icon": "◇",
+      "name": "工厂与量产",
+      "cases": [
+        {
+          "code": "FACTORY-SN",
+          "name": "模组 SN 写入与持久化",
+          "capability": "待适配",
+          "tool": "get/set-sn",
+          "matrix": "合法值、长度边界、非法字符",
+          "assertion": "备份原 SN，写后回读，重启回读，再恢复并验证；仅专用测试模组",
+          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp、ai/knowledge/factory-ft.md"
+        },
+        {
+          "code": "FACTORY-BOARD-SN",
+          "name": "上下板 SN",
+          "capability": "待适配",
+          "tool": "get/set-board-sn",
+          "matrix": "上下板独立值与边界",
+          "assertion": "检查字段不串写、重启持久性、错误输入拒绝和原值恢复",
+          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp、ai/knowledge/factory-ft.md"
+        },
+        {
+          "code": "FACTORY-AGING",
+          "name": "老化状态与完整周期",
+          "capability": "待适配",
+          "tool": "ft + 老化状态",
+          "matrix": "未运行 / 运行中 / 成功 / 失败；短诊断与完整周期分开",
+          "assertion": "分别验证温度、I2C、USB、MIPI、Flash、DDR、同步；单个 overall_pass 或 set-ft-aging 不代表真实老化通过",
+          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp、ai/knowledge/factory-ft.md"
+        },
+        {
+          "code": "FACTORY-CALIB",
+          "name": "标定文件与模式",
+          "capability": "待适配",
+          "tool": "get-calib + 受控工装",
+          "matrix": "标定文件完整性 / 模式 / 加载行为",
+          "assertion": "只读校验先接入；写入仅备份可恢复的专用设备，验证加载结果而非上传成功",
+          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp、ai/knowledge/factory-ft.md"
+        }
+      ]
+    },
+    {
+      "id": "telemetry",
+      "icon": "⌁",
+      "name": "信息上报与监视",
+      "cases": [
+        {
+          "code": "INFO-PING",
+          "name": "控制链路与 RTT",
+          "capability": "待适配",
+          "tool": "ping",
+          "matrix": "空闲 / 开流 / 并发控制",
+          "assertion": "统计请求数、成功率、超时、p50/p95/p99；XU ping 不等于网络 ICMP",
+          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
+        },
+        {
+          "code": "INFO-SENSORS",
+          "name": "Sensor / VICAP / ISP 上报",
+          "capability": "待适配",
+          "tool": "sensor-status / vicap-status / isp-status",
+          "matrix": "支持硬件型号与各设备模式",
+          "assertion": "核对枚举数量、型号和活跃状态；不能仅搜索命令执行成功",
+          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
+        },
+        {
+          "code": "INFO-IMU",
+          "name": "IMU 上报",
+          "capability": "待适配",
+          "tool": "imu-status + imu",
+          "matrix": "进程 / IIO / 实际样本",
+          "assertion": "进程存活、型号和实际数据三者一致，报告缺样和时间异常",
+          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
+        },
+        {
+          "code": "INFO-TEMPERATURE",
+          "name": "温度与帧率长期监视",
+          "capability": "待适配",
+          "tool": "get-temperature + stream",
+          "matrix": "产品定义采样间隔与持续时间",
+          "assertion": "保存带时间戳的温度/FPS 曲线、峰值、超限时长；缺报或恒定占位值单独判定",
+          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
+        },
+        {
+          "code": "INFO-IDENTITY",
+          "name": "设备身份与版本一致性",
+          "capability": "待适配",
+          "tool": "get-cpu-serial / get-version / health",
+          "matrix": "烧录前后、重枚举后",
+          "assertion": "CPU 序列号、物理端口、运行 commit 与本轮锁定一致；不得以全零 UVC serial 绑定",
+          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
+        }
+      ]
+    },
+    {
+      "id": "storage",
+      "icon": "▤",
+      "name": "文件与参数持久化",
+      "cases": [
+        {
+          "code": "FILE-PERSIST-REBOOT",
+          "name": "文件重启后持久化",
+          "capability": "待适配",
+          "tool": "file-put / file-get + reboot",
+          "matrix": "持久分区专用测试路径 × 文件大小",
+          "assertion": "写入→SHA-256 回读→重启同设备→再次回读；/tmp 往返不属于此项",
+          "source": "tools/uvc_host_ctl.cpp、bench/test_runtime.py"
+        },
+        {
+          "code": "FILE-PERSIST-POWER",
+          "name": "文件断电后持久化",
+          "capability": "待适配",
+          "tool": "文件工具 + 可控供电工装",
+          "matrix": "写完成后断电 / 写入中断电分开",
+          "assertion": "断电后数据一致或符合明确定义的原子性；记录继电器时间及设备重连",
+          "source": "tools/uvc_host_ctl.cpp、bench/test_runtime.py"
+        },
+        {
+          "code": "FILE-BOUNDARY",
+          "name": "文件边界与失败恢复",
+          "capability": "待适配",
+          "tool": "file-put / file-get",
+          "matrix": "空文件、分块边界、非对齐长度、非法路径、空间不足",
+          "assertion": "错误可识别，无越界写入和静默截断；隔离路径，备份与清理可验证",
+          "source": "tools/uvc_host_ctl.cpp、bench/test_runtime.py"
+        },
+        {
+          "code": "PARAM-PERSIST",
+          "name": "参数重启持久性",
+          "capability": "待适配",
+          "tool": "FOV / 模式 / USB profile",
+          "matrix": "每个持久参数 × 重启",
+          "assertion": "写后回读与重启后回读分别断言，结束恢复；当前 FOV 用例只验证即时回读",
+          "source": "tools/uvc_host_ctl.cpp、bench/test_runtime.py"
+        }
+      ]
+    },
+    {
+      "id": "recovery",
+      "icon": "↻",
+      "name": "压测",
+      "cases": [
+        {
+          "code": "STABILITY-SOAK",
+          "name": "长时间多流运行",
+          "capability": "待适配",
+          "tool": "stream + imu + ctl",
+          "matrix": "产品定义持续时间与负载",
+          "assertion": "持续保存 FPS、温度、RTT、资源指标；异常不中断证据归档，结束正常清理",
+          "source": "tools/rmsl_single_module_test、uvc_host_multisync.cpp、uvc_host_ota.cpp"
+        },
+        {
+          "code": "SYNC-MULTI",
+          "name": "多模组同步",
+          "capability": "待适配",
+          "tool": "multisync",
+          "matrix": "主从拓扑、同步治具和模组数量",
+          "assertion": "按序号配对并判定时间偏差、漂移、失步恢复；缺治具阻塞",
+          "source": "tools/rmsl_single_module_test、uvc_host_multisync.cpp、uvc_host_ota.cpp"
+        },
+        {
+          "code": "STRESS-SWITCH",
+          "name": "反复切换稳定性",
+          "capability": "后续实现",
+          "tool": "原子功能切换用例组合",
+          "matrix": "循环次数 / 次序 / 随机种子",
+          "source": "独立压测目录",
+          "assertion": "复用单次切换用例，记录逐轮恢复时间、帧率、温度、掉线与失败轮次"
+        }
+      ]
+    }
+  ]
+}
