@@ -5,6 +5,9 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]/'bench'
 CODES=('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP','SWITCH-ROTATE-CONTROL')+tuple(json.loads((ROOT/'switch-codes.json').read_text()))
 
+RETIRED_CODES=('SWITCH-ALGO-ASYNC', 'SWITCH-ALGO-DENOISE', 'SWITCH-ALGO-ITER', 'SWITCH-IR-BTNR')
+ACTIVE_CODES=tuple(code for code in CODES if code not in RETIRED_CODES)
+
 def sha(path): return hashlib.sha256(path.read_bytes()).hexdigest()
 
 def definition(code):

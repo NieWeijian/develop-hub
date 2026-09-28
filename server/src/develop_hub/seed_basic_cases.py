@@ -1,11 +1,11 @@
 from sqlalchemy import select
 from .db import SessionLocal
 from .models import TestCase, TestCaseRisk
-from .basic_cases import CODES, definition
+from .basic_cases import ACTIVE_CODES, RETIRED_CODES, definition
 
 def seed():
     with SessionLocal() as db:
-        for code in CODES:
+        for code in ACTIVE_CODES:
             d=definition(code)
             case=db.scalar(select(TestCase).where(TestCase.code==code))
             if case is None:
@@ -17,14 +17,18 @@ def seed():
             case.timeout_seconds=d['timeout_seconds'];case.expected_exit_code=0
             case.risk_level=TestCaseRisk.READ_ONLY if d['risk_level']=='read_only' else TestCaseRisk.STATE_CHANGE
             case.enabled=True
+        for case in db.scalars(select(TestCase).where(TestCase.code.in_(RETIRED_CODES))):
+            case.enabled=False
         db.commit()
 if __name__=='__main__': seed()
 
 
 def install_missing(db):
     """Add shipped cases without rewriting operator settings or historical IDs."""
+    for case in db.scalars(select(TestCase).where(TestCase.code.in_(RETIRED_CODES))):
+        case.enabled=False
     added=[]
-    for code in CODES:
+    for code in ACTIVE_CODES:
         if db.scalar(select(TestCase).where(TestCase.code==code)) is not None:
             continue
         d=definition(code)

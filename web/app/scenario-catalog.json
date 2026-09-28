@@ -57,16 +57,7 @@
           "name": "RGB BTNR 开关",
           "capability": "已接入",
           "tool": "get/set-rgb-btnr",
-          "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
-          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
-        },
-        {
-          "code": "SWITCH-IR-BTNR",
-          "name": "IR BTNR 开关",
-          "capability": "已接入",
-          "tool": "get/set-ir-btnr",
-          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "matrix": "开流后：开 → 回读抓图 → 关 → 回读抓图 → 恢复实际原值",
           "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
           "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
@@ -80,29 +71,11 @@
           "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
-          "code": "SWITCH-ALGO-ASYNC",
-          "name": "算法异步开关",
-          "capability": "已接入",
-          "tool": "set-algo-async",
-          "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
-          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
-        },
-        {
-          "code": "SWITCH-ALGO-ITER",
-          "name": "算法迭代次数",
-          "capability": "已接入",
-          "tool": "set-algo-iter",
-          "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
-          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
-        },
-        {
           "code": "SWITCH-ALGO-FPS",
           "name": "算法帧率配置",
           "capability": "已接入",
           "tool": "set-algo-fps",
-          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "matrix": "RV1126B 仅 10fps",
           "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
           "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
@@ -111,15 +84,6 @@
           "name": "算法模型类型",
           "capability": "已接入",
           "tool": "set-algo-model-type",
-          "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
-          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
-        },
-        {
-          "code": "SWITCH-ALGO-DENOISE",
-          "name": "算法去噪开关",
-          "capability": "已接入",
-          "tool": "set-algo-denoise",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
           "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
           "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
@@ -138,7 +102,7 @@
           "name": "算法 uncertain 阈值",
           "capability": "已接入",
           "tool": "set-algo-uncertain",
-          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "matrix": "独立测最小值、最大值；其他参数不变；图片比较效果",
           "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
           "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
@@ -147,7 +111,7 @@
           "name": "算法 discontinue 阈值",
           "capability": "已接入",
           "tool": "set-algo-discontinue",
-          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "matrix": "独立测最小值、最大值；其他参数不变；图片比较效果",
           "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
           "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
@@ -156,7 +120,7 @@
           "name": "算法 uncertain-delta 阈值",
           "capability": "已接入",
           "tool": "set-algo-uncertain-delta",
-          "matrix": "产品支持值；单次功能切换，不含循环压测",
+          "matrix": "独立测最小值、最大值；其他参数不变；图片比较效果",
           "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
           "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         }

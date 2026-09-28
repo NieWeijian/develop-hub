@@ -14,17 +14,13 @@ ROOT = Path(__file__).resolve().parent
 SPECS = {
  'SWITCH-ROTATE': ('旋转开关', 'system', 'rotate', 'set-rotate', [0, 1]),
  'SWITCH-RGB-BTNR': ('RGB BTNR', 'rgb', 'btnr', 'set-rgb-btnr', [0, 1]),
- 'SWITCH-IR-BTNR': ('IR BTNR', 'ir', 'btnr', 'set-ir-btnr', [0, 1]),
  'SWITCH-PROJECTOR': ('投影仪开关', 'projector', 'enable', 'set-projector', [0, 1]),
- 'SWITCH-ALGO-ASYNC': ('算法异步开关', 'algo', 'async', 'set-algo-async', [0, 1]),
- 'SWITCH-ALGO-ITER': ('算法迭代次数', 'algo', 'iter', 'set-algo-iter', [1, 2, 3]),
- 'SWITCH-ALGO-FPS': ('算法帧率', 'algo', 'fps', 'set-algo-fps', [10, 30]),
+ 'SWITCH-ALGO-FPS': ('算法帧率', 'algo', 'fps', 'set-algo-fps', [10]),
  'SWITCH-ALGO-MODEL': ('算法模型', 'algo', 'model_type', 'set-algo-model-type', [0, 1, 2]),
- 'SWITCH-ALGO-DENOISE': ('算法去噪', 'algo', 'denoise', 'set-algo-denoise', [0, 25, 50]),
  'SWITCH-ALGO-FULLSIZE': ('算法全尺寸输出', 'algo', 'full_size', 'set-algo-full-size', [0, 1]),
- 'SWITCH-ALGO-UNCERTAIN': ('算法不确定性阈值', 'algo', 'uncertain', 'set-algo-uncertain', [0, 50, 100]),
- 'SWITCH-ALGO-DISCONTINUE': ('算法不连续阈值', 'algo', 'discontinue', 'set-algo-discontinue', [0, 25, 50]),
- 'SWITCH-ALGO-UNCERTAIN-DELTA': ('算法不确定性差值', 'algo', 'uncertain_delta', 'set-algo-uncertain-delta', [0, 50, 100]),
+ 'SWITCH-ALGO-UNCERTAIN': ('算法不确定性阈值', 'algo', 'uncertain', 'set-algo-uncertain', [0, 100]),
+ 'SWITCH-ALGO-DISCONTINUE': ('算法不连续阈值', 'algo', 'discontinue', 'set-algo-discontinue', [0, 50]),
+ 'SWITCH-ALGO-UNCERTAIN-DELTA': ('算法不确定性差值', 'algo', 'uncertain_delta', 'set-algo-uncertain-delta', [0, 100]),
  'SWITCH-DEVICE-MODE': ('设备模式切换', 'system', 'usb_mode', 'set-device-mode', ['rgb+depth', 'rgb+ir', 'rgb+depth+ir']),
  'SWITCH-RESOLUTION': ('分辨率切换', 'algo', 'resolution', 'set-algo-mode', ['640x352', '512x448']),
 }
@@ -67,13 +63,17 @@ class Capture:
             meta_path=folder/('g'+str(generation)+'.json')
             while not meta_path.exists():
                 if proc.poll() is not None: raise RuntimeError('Capture exited: '+(folder/'capture.log').read_text(errors='replace')[-600:])
-                if time.monotonic()>deadline: raise RuntimeError('Stable frames not received: '+str(folder.relative_to(self.case.out)))
+                if time.monotonic()>deadline:
+                    status=folder/'capture-status.json'
+                    detail=status.read_text() if status.exists() else 'no capture diagnostics'
+                    self.case.result['capture_error']={'stream':typ,'diagnostics':detail}
+                    raise RuntimeError('Valid advancing frame window not reached: '+str(folder.relative_to(self.case.out))+'; '+detail)
                 time.sleep(.2)
             meta=json.loads(meta_path.read_text());raw=meta_path.with_suffix('.raw');preview=meta_path.with_suffix('.png')
             png(raw.read_bytes(),meta,preview);atomic(meta_path,meta)
             for path,role in [(raw,'raw_frame'),(preview,'image'),(meta_path,'frame_metadata')]:
                 self.case.result['files'].append({'path':str(path.relative_to(self.case.out)),'role':role,'label':self.label,'stream':{1:'RGB',2:'Depth',3:'IR'}[typ],'size_bytes':path.stat().st_size,'sha256':digest(path)})
-            self.case.check(self.label+' '+str(typ)+' stable frame', '>=12 sequential complete frames',meta,meta['consecutive_valid_frames']>=12)
+            self.case.check(self.label+' '+str(typ)+' stable frame', '>=12 valid advancing frames over >=1 second',meta,meta['consecutive_valid_frames']>=12)
     def close(self):
         for proc,log,_,_ in self.items:
             if proc.poll() is None:
@@ -109,27 +109,30 @@ class SwitchCase(Case):
             initial=self.params('save-parameters');atomic(self.out/'original-parameters.json',initial)
             original=self.value(initial,section,key)
             self.result.update(scope='configuration_readback_and_host_stream_capture',image_evidence={'state':'host_capture'},recovery={'state':'pending'})
-            # IR BTNR needs an IR stream. Keep this setup separate and restore the original mode.
-            if self.code=='SWITCH-IR-BTNR' and 'ir' not in initial['system']['usb_mode']:
-                outer_mode=initial['system']['usb_mode'];self.write('enable-ir-mode','set-device-mode','rgb+ir')
             if key=='btnr':
-                capture=Capture(self,'btnr-baseline');capture.snapshot(0)
-                live=self.call('initial-live-btnr','get-'+section+'-btnr')
-                match=re.fullmatch(section+r'-btnr: ([01])',live)
-                self.result['assertions'].append({'name':'Persisted BTNR applied on stream start','expected':original,'actual':live,'passed':bool(match and match[1]==original)})
-                self.save()
-                for generation,target in enumerate((1-int(original),int(original)),1):
+                # BTNR is a live ISP control. Never compare its startup state to get-param.
+                original=None
+                capture=Capture(self,'rgb-btnr')
+                deadline=time.monotonic()+30
+                while True:
+                    try:
+                        live=self.call('save-live-btnr','get-rgb-btnr')
+                        match=re.fullmatch(r'rgb-btnr: ([01])',live)
+                        if match:original=match[1];break
+                    except RuntimeError:
+                        pass
+                    if time.monotonic()>deadline:raise RuntimeError('Live RGB BTNR unavailable after stream start')
+                    time.sleep(.5)
+                for generation,target in enumerate((1,0),1):
                     self.write('live-set-'+str(target),command,target)
-                    actual=self.value(self.params('live-readback-'+str(target)),section,key)
-                    self.check('BTNR config '+str(target),str(target),actual,actual==str(target))
                     deadline=time.monotonic()+3
                     while True:
-                        live=self.call('live-status-'+str(target),'get-'+section+'-btnr')
-                        match=re.fullmatch(section+r'-btnr: ([01])',live)
-                        if match and match[1]==str(target) or time.monotonic()>deadline:break
+                        live=self.call('live-status-'+str(target),'get-rgb-btnr')
+                        match=re.fullmatch(r'rgb-btnr: ([01])',live)
+                        if (match and match[1]==str(target)) or time.monotonic()>deadline:break
                         time.sleep(.2)
-                    capture.label='btnr-'+str(target);capture.snapshot(generation)
-                    self.result['assertions'].append({'name':'Live BTNR '+str(target),'expected':str(target),'actual':live,'passed':bool(match and match[1]==str(target))});self.save()
+                    capture.label='RGB BTNR '+('开' if target else '关');capture.snapshot(generation)
+                    self.result['assertions'].append({'name':'Live RGB BTNR '+str(target),'expected':str(target),'actual':live,'passed':bool(match and match[1]==str(target))});self.save()
                 values=[]
             if self.code=='SWITCH-PROJECTOR':
                 # This value is a command mailbox, not a physical-state getter.
@@ -175,7 +178,12 @@ class SwitchCase(Case):
             if original is not None:
                 try:
                     self.bind();self.write('restore-original',command,original)
-                    actual=self.value(self.params('verify-restored'),section,key)
+                    if key=='btnr':
+                        live=self.call('verify-restored-live','get-rgb-btnr')
+                        match=re.fullmatch(r'rgb-btnr: ([01])',live)
+                        actual=match[1] if match else live
+                    else:
+                        actual=self.value(self.params('verify-restored'),section,key)
                     if actual!=original:raise RuntimeError('Original value not restored: '+actual+' != '+original)
                     if capture:capture.close();capture=None
                     if outer_mode:

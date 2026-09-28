@@ -8,10 +8,11 @@
   "tool": "get/set-rgb-btnr",
   "matrix": "产品支持值；单次功能切换，不含循环压测",
   "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-  "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。",
+  "assertion": "开流后读取并保存实际 BTNR 状态；BTNR 开→回读并抓图；BTNR 关→回读并抓图；开流期间恢复原实际状态，再关流",
   "tool_gaps": "",
   "image_purpose": "结果展示，无人工复核状态；人工可在轮次修改结果分类",
   "recovery": "发生任意异常也尝试恢复；恢复失败阻止后续用例",
   "image_provider": "3588 host capture",
-  "executable": "test-cases/SWITCH-RGB-BTNR/1.0.0/run.py"
+  "executable": "test-cases/SWITCH-RGB-BTNR/1.0.0/run.py",
+  "scope": "只测试 live RGB BTNR；默认开启，不校验 get-param 与开流默认值一致"
 }

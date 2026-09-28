@@ -10,7 +10,8 @@ from .basic_cases import ROOT, definition, sha
 from .models import TestRound, TestRoundEvent, TestRoundStatus, TestCase, TestBench, new_id
 from .db import SessionLocal
 
-SWITCH_CODES=tuple(json.loads((ROOT/'switch-codes.json').read_text()))
+from .basic_cases import ACTIVE_CODES
+SWITCH_CODES=tuple(code for code in json.loads((ROOT/'switch-codes.json').read_text()) if code in ACTIVE_CODES)
 PACKAGE=['worker.py','quick_tests.py','switch_runtime.py','frame_images.py','test_runtime.py','rv1126b.py','host-capture','test-bins/ctl-trace-1/uvc_host_ctl']
 
 async def create(payload,db,workflow):

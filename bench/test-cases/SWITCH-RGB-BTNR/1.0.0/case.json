@@ -10,10 +10,11 @@
   "timeout_seconds": 900,
   "parameters": {},
   "assertions": [
-    "工具与固件身份一致",
-    "切换参数回读或命令消费确认",
-    "稳定帧及图片留存",
-    "恢复原配置"
+    "开流后读取并保存实际 BTNR 状态",
+    "BTNR 开→回读并抓图",
+    "BTNR 关→回读并抓图",
+    "开流期间恢复原实际状态，再关流"
   ],
-  "scope": "配置与稳定取流；图片展示供人工判断，不自动断言视觉效果"
+  "scope": "只测试 live RGB BTNR；默认开启，不校验 get-param 与开流默认值一致",
+  "revision": "2026-09-28-corrected-scope"
 }

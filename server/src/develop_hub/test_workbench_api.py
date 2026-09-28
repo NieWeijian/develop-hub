@@ -12,7 +12,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from .basic_cases import CODES, definition
+from .basic_cases import CODES, ACTIVE_CODES, definition
 from .bench_readiness import BOARD, artifact_patterns, inspect_bench
 from .db import get_db
 from .models import (
@@ -393,7 +393,7 @@ async def create_test_round(
         case = cases_by_id[case_id]
         adapter = None
         if payload.execute_test_cases:
-            if case.code not in CODES:
+            if case.code not in ACTIVE_CODES:
                 raise HTTPException(status_code=422, detail=f'用例尚未适配：{case.code}')
             adapter = definition(case.code)
             parameters = payload.test_case_parameters.get(case.id, {})
@@ -514,7 +514,7 @@ def install_basic_cases(db: Session = Depends(get_db)) -> dict:
 
 @router.get('/basic-case-definitions')
 def basic_case_definitions() -> list[dict]:
-    return [definition(code) for code in CODES]
+    return [definition(code) for code in ACTIVE_CODES]
 
 
 @router.get('/test-rounds/{round_id}/cases/{code}/evidence')

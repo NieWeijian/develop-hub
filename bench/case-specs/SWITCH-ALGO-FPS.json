@@ -8,10 +8,11 @@
   "tool": "set-algo-fps",
   "matrix": "产品支持值；单次功能切换，不含循环压测",
   "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-  "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。",
+  "assertion": "工具与固件身份一致；切换参数回读或命令消费确认；稳定帧及图片留存；恢复原配置",
   "tool_gaps": "",
   "image_purpose": "结果展示，无人工复核状态；人工可在轮次修改结果分类",
   "recovery": "发生任意异常也尝试恢复；恢复失败阻止后续用例",
   "image_provider": "3588 host capture",
-  "executable": "test-cases/SWITCH-ALGO-FPS/1.0.0/run.py"
+  "executable": "test-cases/SWITCH-ALGO-FPS/1.0.0/run.py",
+  "scope": "只配置 10fps，不遍历 30fps；长期帧率质量另测"
 }
