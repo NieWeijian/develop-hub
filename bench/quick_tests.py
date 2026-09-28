@@ -1,0 +1,38 @@
+"""Current-firmware execution boundary: no build, DFU or flash operation."""
+import json
+from pathlib import Path
+from worker import atomic, digest, timestamp
+from rv1126b import discover
+from switch_runtime import SPECS
+
+ROOT=Path(__file__).resolve().parent
+
+def execute(job,config):
+    if config.get('flash') or config.get('artifacts'):raise RuntimeError('Quick tests cannot include flash instructions or firmware artifacts')
+    if not config.get('test_cases'):raise RuntimeError('No selected cases')
+    for name,sha in config['package_sha256'].items():
+        path=(ROOT/name).resolve()
+        if ROOT not in path.parents or digest(path)!=sha:raise RuntimeError('Test package mismatch: '+name)
+    target=config['device']
+    matching=[d for d in discover() if all(d[k]==target[k] for k in ('serial','usb_port','version'))]
+    if len(matching)!=1:raise RuntimeError('Current firmware/CPU serial/USB port differs from snapshot')
+    job.save('test_cases',execution_boundary='current_firmware',identity_verified=True,boot_version=target['version'],device=target,message='Current firmware verified; build and flash skipped')
+    all_pass=True
+    for index,item in enumerate(config['test_cases']):
+        code=item['code']
+        if code not in SPECS:raise RuntimeError('Unregistered switching testcase')
+        out=job.path/'cases'/code/'attempt-001';out.mkdir(parents=True,exist_ok=False)
+        tool=ROOT/'test-bins/ctl-trace-1/uvc_host_ctl'
+        data={'device':target,'tool':str(tool),'tool_sha256':digest(tool),'video':matching[0]['video'],'parameters':item.get('parameters',{})}
+        atomic(out/'case-input.json',data)
+        job.result['cases'][index].update(state='running')
+        job.save(current_case=code,message='Running '+code)
+        rc,_=job.run(['/usr/bin/python3',str(ROOT/'test-cases'/code/'1.0.0/run.py'),'--input',str(out/'case-input.json'),'--output-dir',str(out)],code+'.log',900)
+        result=json.loads((out/'result.json').read_text())
+        assertions=result.get('assertions',[])
+        passed=rc==0 and result.get('outcome')=='passed' and assertions and all(a['passed'] for a in assertions) and result.get('recovery',{}).get('state')=='passed'
+        all_pass=bool(all_pass and passed)
+        job.result['cases'][index].update(state='finished',outcome=result.get('outcome','error'),recovery=result.get('recovery'),message=result.get('message'),assertions_passed=sum(a['passed'] for a in assertions),assertions_total=len(assertions),images=sum(f['role']=='image' for f in result.get('files',[])))
+        job.save()
+        if result.get('recovery',{}).get('state')=='failed':raise RuntimeError('Device recovery failed; remaining cases blocked')
+    job.save('tests_complete',state='finished',outcome='passed' if all_pass else 'failed',message='Current-firmware switching tests completed',completed_at=timestamp(),current_case=None)

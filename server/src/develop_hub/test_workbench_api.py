@@ -362,12 +362,15 @@ async def create_test_round(
     db: Session = Depends(get_db),
     workflow: TestRoundWorkflow = Depends(get_round_workflow),
 ) -> TestRound:
+    if payload.developer_mode:
+        from .developer_tests import create
+        return await create(payload,db,workflow)
     product = db.scalar(product_query().where(TestProduct.id == payload.product_id))
     if not product:
         raise HTTPException(status_code=404, detail="Test product not found")
     if product.status != TestProductStatus.READY or not (product.baseline_result or {}).get("passed"):
         raise HTTPException(status_code=409, detail="Product baseline must pass before creating a Test Round")
-    point = db.get(TestPoint, payload.test_point_id)
+    point = db.get(TestPoint, payload.test_point_id) if payload.test_point_id else None
     if not point or point.product_id != product.id or not point.ready:
         raise HTTPException(status_code=422, detail="Test point must be a ready Patchset from the locked product")
     bench = db.get(TestBench, payload.bench_id)
@@ -525,6 +528,12 @@ async def case_evidence(round_id: str, code: str, kind: str = 'result', offset: 
         raise HTTPException(status_code=404,detail='Evidence not found')
     if not any(c.get('code')==code for c in current.test_case_snapshot):
         raise HTTPException(status_code=404,detail='Case is not in this round')
+    from .evidence_store import directory
+    local=directory(current.display_number)/'cases'/code/'attempt-001'/files[kind]
+    if local.is_file() and (directory(current.display_number)/'archive-complete.json').exists():
+        with local.open('rb') as f:
+            f.seek(offset);data=f.read(4096);end=f.tell()
+        return {'data':base64.b64encode(data).decode(),'content':data.decode('utf-8',errors='replace'),'next_offset':end,'eof':end>=local.stat().st_size}
     path=current.remote_path+'/cases/'+code+'/attempt-001/'+files[kind]
     script="import pathlib,base64,json; p=pathlib.Path("+repr(path)+"); f=p.open('rb'); f.seek("+str(offset)+"); data=f.read(4096); print(json.dumps({'data':base64.b64encode(data).decode(),'next_offset':f.tell(),'eof':f.tell()>=p.stat().st_size}))"
     response=await workflow._remote(TestBench(**current.bench_snapshot),'python3 -c '+shlex.quote(script),20)
@@ -641,3 +650,17 @@ async def download_round_report(round_id: str, db: Session = Depends(get_db), wo
         'flash_complete':'NOT_TESTED',
     }.get(row.status.value, 'IN_PROGRESS')
     return JSONResponse(report, headers={'Content-Disposition': f'attachment; filename="TEST-{row.display_number:06d}.json"'})
+
+
+@router.get('/test-rounds/{round_id}/cases/{code}/artifact')
+async def case_artifact(round_id: str,code: str,name: str,db: Session=Depends(get_db),workflow: TestRoundWorkflow=Depends(get_round_workflow)):
+    from fastapi.responses import FileResponse
+    from .evidence_store import archive,artifact,directory
+    row=db.get(TestRound,round_id)
+    if not row or not row.remote_path or not any(c['code']==code for c in row.test_case_snapshot):raise HTTPException(404,'Unknown case')
+    if (row.controller_result or {}).get('state') not in ('finished','interrupted','rejected'):raise HTTPException(409,'图片将在本轮完成后同步到 Hub')
+    try:
+        await archive(workflow,TestBench(**row.bench_snapshot),row.remote_path,row.display_number)
+        path=artifact(directory(row.display_number),code,name)
+    except (ValueError,OSError,RuntimeError) as exc:raise HTTPException(404,str(exc)) from exc
+    return FileResponse(path,media_type='image/png' if path.suffix=='.png' else 'application/octet-stream',headers={'X-Content-Type-Options':'nosniff'})

@@ -514,12 +514,13 @@ class TestBenchView(TestBenchCreate):
 
 
 class TestRoundCreate(BaseModel):
+    developer_mode: bool = False
     allow_wear_limit_override: bool = False
     execute_test_cases: bool = False
     flash_firmware: bool = False
     device_serial: str = Field(default="", max_length=64, pattern=r"^[A-Za-z0-9_-]*$")
     product_id: str
-    test_point_id: str
+    test_point_id: str | None = None
     bench_id: str
     test_case_ids: list[str] = Field(min_length=1)
     test_case_parameters: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -544,7 +545,7 @@ class TestRoundView(BaseModel):
     id: str
     display_number: int
     product_id: str
-    test_point_id: str
+    test_point_id: str | None = None
     bench_id: str
     status: TestRoundStatus
     bench_snapshot: dict[str, Any]
@@ -568,7 +569,7 @@ class TestRoundView(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     product: TestProductView
-    test_point: TestPointView
+    test_point: TestPointView | None
     bench: TestBenchView
     events: list[TestRoundEventView] = Field(default_factory=list)
 

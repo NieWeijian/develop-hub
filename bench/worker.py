@@ -120,7 +120,10 @@ class Job:
         all_pass=True
         for index,item in enumerate(config['test_cases']):
             adapter=item.get('adapter') or {};code=adapter.get('id','')
-            if code not in ('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP','SWITCH-ROTATE-CONTROL'): raise RuntimeError('Unregistered test adapter')
+            from switch_runtime import SPECS
+            if code not in ('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP','SWITCH-ROTATE-CONTROL') and code not in SPECS: raise RuntimeError('Unregistered test adapter')
+            for name,expected in adapter.get('support_sha256',{}).items():
+                if name not in ('switch_runtime.py','frame_images.py','host-capture','rv1126b.py') or digest(root/name)!=expected:raise RuntimeError('Capture runtime hash mismatch')
             entry=root/'test-cases'/code/'1.0.0/run.py'
             if digest(tool)!=adapter['tool_sha256'] or digest(root/'test_runtime.py')!=adapter['runtime_sha256'] or digest(entry)!=adapter['entrypoint_sha256'] or digest(entry.parent/'case.json')!=adapter['definition_sha256']:
                 raise RuntimeError('Test package version/hash mismatch')
@@ -128,10 +131,15 @@ class Job:
                 if digest(entry.parent/fixture['path'])!=fixture['sha256']: raise RuntimeError('Fixture hash mismatch')
             out=self.path/'cases'/code/'attempt-001';out.mkdir(parents=True,exist_ok=False)
             data={'round_id':config['round_id'],'case_id':code,'definition':adapter,'tool':str(tool),'tool_sha256':adapter['tool_sha256'],'video':video,'usb_location':location,'commit':config['source']['commit'],'firmware_sha256':self.result['firmware_sha256'],'parameters':item.get('parameters',{})}
+            if code in SPECS:
+                from rv1126b import discover
+                matching=[d for d in discover() if d['serial']==config['flash']['device_serial'] and self.usb_location(Path(d['usb_path']))==location]
+                if len(matching)!=1:raise RuntimeError('Target device unavailable for switching case')
+                data['device']=matching[0];data['video']=matching[0]['video']
             atomic(out/'case-input.json',data)
             self.result['cases'][index]={'id':item['id'],'code':code,'name':item['name'],'state':'running'}
             self.save(message='Running '+code,current_case=code)
-            rc,_=self.run(['/usr/bin/python3',str(entry),'--input',str(out/'case-input.json'),'--output-dir',str(out)],code+'.log',120)
+            rc,_=self.run(['/usr/bin/python3',str(entry),'--input',str(out/'case-input.json'),'--output-dir',str(out)],code+'.log',900 if code in SPECS else 120)
             result=json.loads((out/'result.json').read_text())
             passed=rc==0 and result.get('state')=='finished' and result.get('outcome')=='passed' and bool(result.get('assertions')) and all(a.get('passed') is True for a in result['assertions'])
             all_pass=all_pass and passed
@@ -148,10 +156,14 @@ class Job:
         self.result['config_sha256']=marker_data['config_sha256']
         if digest(config_file)!=marker_data['config_sha256']: raise RuntimeError('JSON digest mismatch')
         config=json.loads(config_file.read_text())
-        if config.get('schema_version')!=2 or config.get('execution_boundary')!='firmware_flash': raise RuntimeError('Unsupported job protocol')
+        if config.get('schema_version')!=2 or config.get('execution_boundary') not in ('firmware_flash','current_firmware'): raise RuntimeError('Unsupported job protocol')
         self.result['round_id']=config['round_id']
         self.result['config_sha256']=marker_data['config_sha256']
         self.result['cases']=[{'id':c['id'],'code':c.get('code'),'name':c.get('name'),'category':c.get('category','basic'),'state':'queued' if config.get('execute_test_cases') else 'not_run','reason':'Waiting for verified firmware boot' if config.get('execute_test_cases') else 'Current boundary is firmware flashing'} for c in config['test_cases']]
+        if config.get('execution_boundary')=='current_firmware':
+            from quick_tests import execute
+            execute(self,config)
+            return
         if config.get('flash',{}).get('target_chip')=='RV1126B':
             from rv1126b import execute
             execute(self, config)

@@ -64,13 +64,16 @@ def validate_images(job, config):
         raise RuntimeError('Verified XU control tool required before flashing')
     for adapter in adapters:
         code = adapter.get('id')
-        if code not in ('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP'):
+        from switch_runtime import SPECS
+        if code not in ('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP','SWITCH-ROTATE-CONTROL') and code not in SPECS:
             raise RuntimeError('Unregistered test adapter')
         folder = ROOT/'test-cases'/code/'1.0.0'
         checks = [(ROOT/'test_runtime.py', 'runtime_sha256'), (folder/'run.py', 'entrypoint_sha256'), (folder/'case.json','definition_sha256')]
         for path, key in checks:
             if not path.is_file() or digest(path) != adapter.get(key):
                 raise RuntimeError('Test package hash mismatch before flash: '+key)
+        for name,expected in adapter.get('support_sha256',{}).items():
+            if name not in ('switch_runtime.py','frame_images.py','host-capture','rv1126b.py') or digest(ROOT/name)!=expected:raise RuntimeError('Capture runtime mismatch before flash')
         for fixture in adapter.get('files', []):
             path = (folder/fixture['path']).resolve()
             if folder.resolve() not in path.parents or not path.is_file() or digest(path) != fixture['sha256']:

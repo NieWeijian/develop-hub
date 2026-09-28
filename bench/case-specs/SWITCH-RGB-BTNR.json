@@ -1,15 +1,17 @@
 {
   "code": "SWITCH-RGB-BTNR",
   "name": "RGB BTNR 开关",
-  "definition_version": "0.1.0",
+  "definition_version": "1.0.0",
   "scenario": "switch",
-  "capability": "等待 tools 接口",
-  "execution_enabled": false,
+  "capability": "已接入",
+  "execution_enabled": true,
   "tool": "get/set-rgb-btnr",
   "matrix": "产品支持值；单次功能切换，不含循环压测",
   "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-  "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证",
-  "tool_gaps": "指定设备开流、流就绪和稳定帧 dump；允许值/生效语义",
+  "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。",
+  "tool_gaps": "",
   "image_purpose": "结果展示，无人工复核状态；人工可在轮次修改结果分类",
-  "recovery": "发生任意异常也尝试恢复；恢复失败阻止后续用例"
+  "recovery": "发生任意异常也尝试恢复；恢复失败阻止后续用例",
+  "image_provider": "3588 host capture",
+  "executable": "test-cases/SWITCH-RGB-BTNR/1.0.0/run.py"
 }

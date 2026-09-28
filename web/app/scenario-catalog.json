@@ -1,5 +1,5 @@
 {
-  "version": "0.2.0",
+  "version": "0.3.0",
   "source_commit": "4cfb935",
   "reviewed_at": "2026-09-28",
   "status": "design",
@@ -28,137 +28,137 @@
         {
           "code": "SWITCH-RESOLUTION",
           "name": "分辨率切换",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "set-algo-mode / 取流",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：支持的分辨率枚举、实际帧尺寸/FPS 与稳定帧 dump；设备重枚举后的绑定能力"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
           "code": "SWITCH-DEVICE-MODE",
           "name": "设备模式切换",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "get/set-device-mode",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：模式能力枚举、重枚举身份绑定、各节点实际出流与稳定帧 dump"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
           "code": "SWITCH-ROTATE",
           "name": "图像旋转开关",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "get/set-rotate",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：稳定帧 dump；控制读写子项已独立实现"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
           "code": "SWITCH-RGB-BTNR",
           "name": "RGB BTNR 开关",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "get/set-rgb-btnr",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：指定设备开流、流就绪和稳定帧 dump；允许值/生效语义"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
           "code": "SWITCH-IR-BTNR",
           "name": "IR BTNR 开关",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "get/set-ir-btnr",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：指定设备开流、流就绪和稳定帧 dump；允许值/生效语义"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
           "code": "SWITCH-PROJECTOR",
           "name": "投影仪开关",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "set-projector",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：实际使能状态 getter（含 idle）及恢复语义、稳定 IR 帧 dump"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
           "code": "SWITCH-ALGO-ASYNC",
           "name": "算法异步开关",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "set-algo-async",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、允许值、稳定帧 dump"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
           "code": "SWITCH-ALGO-ITER",
           "name": "算法迭代次数",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "set-algo-iter",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、允许范围、稳定帧 dump"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
           "code": "SWITCH-ALGO-FPS",
           "name": "算法帧率配置",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "set-algo-fps",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、支持帧率与实测帧率、稳定帧 dump"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
           "code": "SWITCH-ALGO-MODEL",
           "name": "算法模型类型",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "set-algo-model-type",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、支持模型和恢复语义、稳定帧 dump"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
           "code": "SWITCH-ALGO-DENOISE",
           "name": "算法去噪开关",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "set-algo-denoise",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、允许值、稳定帧 dump"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
           "code": "SWITCH-ALGO-FULLSIZE",
           "name": "算法全尺寸开关",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "set-algo-full-size",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、允许值与实际尺寸、稳定帧 dump"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
           "code": "SWITCH-ALGO-UNCERTAIN",
           "name": "算法 uncertain 阈值",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "set-algo-uncertain",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、阈值范围/步进、稳定帧 dump"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
           "code": "SWITCH-ALGO-DISCONTINUE",
           "name": "算法 discontinue 阈值",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "set-algo-discontinue",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、阈值范围/步进、稳定帧 dump"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         },
         {
           "code": "SWITCH-ALGO-UNCERTAIN-DELTA",
           "name": "算法 uncertain-delta 阈值",
-          "capability": "等待 tools 接口",
+          "capability": "已接入",
           "tool": "set-algo-uncertain-delta",
           "matrix": "产品支持值；单次功能切换，不含循环压测",
-          "source": "tools/uvc_host_ctl.cpp / uvc_host_preview.cpp",
-          "assertion": "保存原值→设置→等待实际出流稳定→回读/指标断言→dump 结果图片→恢复原值并验证。工具缺口：对应结构化 getter、阈值范围/步进、稳定帧 dump"
+          "source": "bench/switch_runtime.py / host_capture.cpp；控制命令来自固件 tools",
+          "assertion": "保存原值 → 配置回读/命令消费 → 3588 稳定取流抓图 → 恢复核验；图片展示，不自动判定视觉效果。"
         }
       ]
     },

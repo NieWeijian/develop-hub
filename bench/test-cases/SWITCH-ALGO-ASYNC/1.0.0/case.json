@@ -1,0 +1,19 @@
+{
+  "id": "SWITCH-ALGO-ASYNC",
+  "version": "1.0.0",
+  "name": "算法异步开关与图片留存",
+  "category": "basic",
+  "scenario": "switch",
+  "risk_level": "state_change",
+  "command": "set-algo-async",
+  "entrypoint": "test-cases/SWITCH-ALGO-ASYNC/1.0.0/run.py",
+  "timeout_seconds": 900,
+  "parameters": {},
+  "assertions": [
+    "工具与固件身份一致",
+    "切换参数回读或命令消费确认",
+    "稳定帧及图片留存",
+    "恢复原配置"
+  ],
+  "scope": "配置与稳定取流；图片展示供人工判断，不自动断言视觉效果"
+}
