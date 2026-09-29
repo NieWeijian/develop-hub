@@ -753,3 +753,14 @@ h1 { margin: 6px 0 0; font-family: Georgia, "Noto Serif SC", serif; font-size: 3
 .wb-classification-editor { padding:20px; border:1px solid var(--line); border-radius:10px; background:#f5f8f6; margin:20px 0; }
 .wb-classification-editor label { margin:12px 0; }
 .wb-classification-editor input,.wb-classification-editor select,.wb-classification-editor textarea { padding:10px; border:1px solid var(--line); border-radius:6px; }
+
+/* Stream quality configuration: independent controls and optional limits. */
+.stream-parameters { margin: 14px 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: #f8faf9; }
+.stream-parameters fieldset { min-width: 0; margin: 0; padding: 14px; border: 1px solid #d9e0dc; border-radius: 8px; }
+.stream-parameters legend { padding: 0 6px; font-weight: 600; }
+.stream-parameter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.wb-case-select .stream-parameters label { display: flex; flex-direction: column; align-items: stretch; gap: 6px; font-size: 12px; }
+.stream-parameters input { width: 100%; min-width: 0; box-sizing: border-box; }
+.stream-parameters p { color: #63736c; font-size: 12px; margin: 8px 0 14px; }
+.stream-threshold-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+@media (max-width: 800px) { .stream-threshold-grid { grid-template-columns: 1fr; } }
