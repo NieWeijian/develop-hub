@@ -4,6 +4,8 @@
 #include <fstream>
 #include <cstring>
 #include <cstdint>
+#include <vector>
+#include <array>
 namespace hub_metrics {
 namespace fs=std::filesystem;
 inline std::string root;
@@ -19,6 +21,23 @@ class Observer {
  fs::path dir; int type,w,h,fps; bool enabled,ready=false,stalled=false,io_error=false;
  int64_t opened=now_us(),begin=0,last=0,window=opened;
  uint64_t count=0,warm_frames=0;unsigned stable=0,part=0;std::ofstream csv;
+ struct Snapshot {std::vector<char> bytes;Header header{};int64_t host=0;};
+ std::array<Snapshot,2> snapshots;
+ void retain(int slot,v4l2_buffer const& b,uvc_tools::MappedBuffer const& region,Header const& hdr,int64_t now){
+  if(!snapshots[slot].bytes.empty())return;
+  auto& shot=snapshots[slot];auto data=reinterpret_cast<const char*>(region.data());
+  shot.bytes.assign(data,data+b.bytesused);shot.header=hdr;shot.host=now;
+ }
+ void save_snapshots(){
+  for(int i=0;i<2;++i){
+   auto const& shot=snapshots[i];if(shot.bytes.empty())continue;
+   std::string name=i==0?"start":"end";
+   std::ofstream raw(dir/(name+".raw"),std::ios::binary);raw.write(shot.bytes.data(),shot.bytes.size());raw.close();
+   std::ofstream meta(dir/(name+".json"));
+   meta<<"{\"width\":"<<w<<",\"height\":"<<h<<",\"type\":"<<type<<",\"header_size\":"<<shot.header.size<<",\"sequence\":"<<shot.header.sequence<<",\"device_timestamp\":"<<shot.header.timestamp<<",\"host_monotonic_us\":"<<shot.host<<",\"bytes\":"<<shot.bytes.size()<<"}";
+   meta.close();if(!raw||!meta)io_error=true;
+  }
+ }
 public:
  Observer(int t,int width,int height,int rate):type(t),w(width),h(height),fps(rate),enabled(!root.empty()){
   if(enabled){dir=fs::path(root)/(type==1?"rgb":"depth");fs::create_directories(dir);}
@@ -49,11 +68,15 @@ public:
   if(count%50000==0){if(csv.is_open())csv.close();csv.open(dir/("frames-"+std::to_string(part++)+".csv"));csv<<"host_us,v4l2_sequence,source_sequence,device_us,valid,driver_error\n";}
   csv<<now<<','<<b.sequence<<','<<hdr.sequence<<','<<hdr.timestamp<<','<<(valid?1:0)<<','<<((b.flags&V4L2_BUF_FLAG_ERROR)?1:0)<<'\n';
   io_error=!csv;++count;last=now;
+  if(valid&&!(b.flags&V4L2_BUF_FLAG_ERROR)){
+   retain(0,b,region,hdr,now);
+   if(now>=begin+int64_t(duration-1)*1000000)retain(1,b,region,hdr,now);
+  }
  }
  ~Observer(){
   if(!enabled)return;
   if(csv.is_open()){csv.close();io_error=io_error||csv.fail();}
-  auto ended=now_us();bool complete=begin&&!stalled&&!io_error&&ended>=begin+int64_t(duration)*1000000&&count>0;
+  auto ended=now_us();save_snapshots();bool complete=begin&&!stalled&&!io_error&&ended>=begin+int64_t(duration)*1000000&&count>0;
   std::ofstream out(dir/"summary.json");out<<"{\"completed\":"<<(complete?"true":"false")<<",\"stalled\":"<<(stalled?"true":"false")<<",\"received\":"<<count<<",\"start_us\":"<<begin<<",\"end_us\":"<<ended<<",\"duration_seconds\":"<<duration<<"}";
  }
 };

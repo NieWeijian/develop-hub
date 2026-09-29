@@ -11,3 +11,5 @@ Sources and patch are in bench/stream-observer; build.sh links unchanged firmwar
 Verification: synthetic C++ frame input exercises warmup exclusion, fixed-window FPS, missing sequence and timestamp latency through the real observer. Python metric regression tests and full server tests apply. No hardware round is created by deployment.
 
 Execution order: bind and confirm mode, time-sync, launch capture, warmup, shared formal window, close capture, reset clock and restore mode. The start-stream evidence step records the actual command, PID, start/end time and exit code, including launch failure.
+
+Result images: retain the first valid formal frame and the first valid frame in the last second, RGB and Depth separately. Copy each snapshot once into memory; write raw/metadata only after capture exits; render PNG in Python after streaming, avoiding disk/PNG work in measurement loops. Evidence roles image/raw_frame/frame_metadata reuse existing Hub display. Image collection failure is visible.

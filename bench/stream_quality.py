@@ -10,6 +10,7 @@ import time
 from factory_runtime import FactoryCase, Blocked
 from switch_runtime import parse_params
 from worker import atomic, digest, timestamp
+from frame_images import png
 
 ROOT=Path(__file__).resolve().parent
 DEFAULTS={'duration_seconds':18000,'rgb_width':640,'rgb_height':540,'depth_width':640,'depth_height':352,'fps':10,'stall_timeout_seconds':5,'warmup_seconds':10}
@@ -179,8 +180,23 @@ class StreamCase(FactoryCase):
                     self.mode(mode)
                 self.result['recovery']={'state':'passed','detail':'Capture closed; original mode restored; reboot clears test time-sync offset' if synced else 'Capture closed; mode restored'}
             except Exception as exc:self.result.update(outcome='error',recovery={'state':'failed','error':str(exc)})
+            try:
+                for kind in ('rgb','depth'):
+                    folder=self.out/'artifacts'/kind
+                    for phase in ('start','end'):
+                        raw=folder/(phase+'.raw');meta_path=folder/(phase+'.json')
+                        if raw.exists() and meta_path.exists():
+                            meta=json.loads(meta_path.read_text());png(raw.read_bytes(),meta,folder/(phase+'.png'));atomic(meta_path,meta)
+                if self.result.get('outcome')=='passed':
+                    expected=[self.out/'artifacts'/kind/(phase+'.png') for kind in ('rgb','depth') for phase in ('start','end')]
+                    self.check('RGB / Depth 图片留存','正式开始、结束前各两路图片',sum(path.exists() for path in expected),all(path.exists() for path in expected))
+            except Exception as exc:self.result.update(outcome='error',message='结果图片保存失败: '+str(exc))
             for path in (self.out/'artifacts').rglob('*'):
-                if path.is_file():self.artifact(path,'measurement')
+                if not path.is_file():continue
+                is_frame=path.parent.name in ('rgb','depth') and path.stem in ('start','end')
+                role=({'png':'image','raw':'raw_frame','json':'frame_metadata'}.get(path.suffix[1:],'measurement') if is_frame else 'measurement')
+                self.artifact(path,role)
+                if is_frame:self.result['files'][-1].update(stream='RGB' if path.parent.name=='rgb' else 'Depth',label='正式统计开始' if path.stem=='start' else '结束前最后一秒采样')
             self.result.update(state='finished',completed_at=timestamp());self.save()
         return 0 if self.result['outcome']=='passed' else 1
 

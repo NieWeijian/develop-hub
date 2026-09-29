@@ -47,3 +47,12 @@ int main(int argc,char**argv){
     assert m['v4l2_missing_frames']==1
     assert m['estimated_latency_ms']['mean']==20
     assert json.loads((folder/'warmup.json').read_text())['elapsed_seconds']==3
+
+    for phase,sequence in [('start',32),('end',42)]:
+        raw=(folder/(phase+'.raw')).read_bytes()
+        meta=json.loads((folder/(phase+'.json')).read_text())
+        assert len(raw)==100 and meta['sequence']==sequence
+        assert meta['host_monotonic_us']>=3200000
+        from frame_images import png
+        png(raw,meta,folder/(phase+'.png'))
+        assert (folder/(phase+'.png')).read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
