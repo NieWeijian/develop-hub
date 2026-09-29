@@ -148,9 +148,15 @@ class FactoryCase(Case):
                 original_mode = params['system']['usb_mode']
                 finish_normal = self.code in ('FACTORY-SN', 'FACTORY-BOARD-SN')
                 if self.code == 'FACTORY-BOARD-SN':
-                    original = board_sn(self.call('backup-board-sn', 'get-board-sn'))
+                    original_raw = board_sn(self.call('backup-board-sn', 'get-board-sn'))
+                    original = tuple(value if value != '' else '0' for value in original_raw)
+                    self.result['board_sn_restore_policy'] = {
+                        'original': dict(zip(('upper', 'lower'), original_raw)),
+                        'restore_target': dict(zip(('upper', 'lower'), original)),
+                        'empty_value_replacement': '0'}
+                    self.save()
                     if not restorable_board(original):
-                        raise Blocked('Original board SN is empty or not writable; firmware must provide empty-value restoration before this case can mutate it')
+                        raise Blocked('Original board SN contains unsupported nonempty values')
                     restore = ('board', original)
                 else:
                     backup = self.download('backup-calibration', CALIB, 'backup/calib_param_1280x1080.yaml')
@@ -164,7 +170,7 @@ class FactoryCase(Case):
                     upper, lower = original
                     self.call('write-upper-sn', 'set-board-sn', 'QA-U-' + suffix, lower)
                     actual = board_sn(self.call('read-upper-sn', 'get-board-sn'))
-                    self.check('Upper changed, lower unchanged', ('QA-U-' + suffix, lower), actual, actual == ('QA-U-' + suffix, lower))
+                    self.check('Upper changed, lower preserved (empty maps to 0)', ('QA-U-' + suffix, lower), actual, actual == ('QA-U-' + suffix, lower))
                     target = ('QA-U-' + suffix, 'QA-L-' + suffix)
                     self.call('write-lower-sn', 'set-board-sn', *target)
                     getter = lambda step: board_sn(self.call(step, 'get-board-sn'))
@@ -207,7 +213,7 @@ class FactoryCase(Case):
                     self.reboot('reboot-restore')
                     if restore[0] == 'board':
                         value = board_sn(self.call('verify-board-restored', 'get-board-sn'))
-                        self.check('Original board SN restored', restore[1], value, value == restore[1])
+                        self.check('Board SN restore target verified (empty maps to 0)', restore[1], value, value == restore[1])
                     else:
                         self.match_file('original-calibration-restored', CALIB, restore[1])
                         value = self.call('verify-module-sn-restored', 'get-sn')
@@ -215,6 +221,8 @@ class FactoryCase(Case):
                 if original_mode is not None:
                     self.mode('rgb+depth' if finish_normal and changed else original_mode)
                 self.result['recovery'] = {'state': 'passed', 'detail': 'Original data restored and verified' if changed else 'No SN/calibration data changed'}
+                if changed and restore[0] == 'board':
+                    self.result['recovery'].update(self.result['board_sn_restore_policy'], detail='Nonempty SN restored unchanged; empty SN restored as 0')
             except Exception as exc:
                 self.result.update(outcome='error', recovery={'state': 'failed', 'error': str(exc)})
             self.result.update(state='finished', completed_at=timestamp()); self.save()

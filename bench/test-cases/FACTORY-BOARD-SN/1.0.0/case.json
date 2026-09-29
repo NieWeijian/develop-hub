@@ -11,7 +11,7 @@
   "assertions": [
     "calib 模式分别改上板/下板 SN，检查不串写，重启回读",
     "rgb+depth 下检查 SN 与出图；恢复原 SN 并重启校验，最终 rgb+depth",
-    "原 SN 为空时阻塞：现有 tools 不能恢复空 SN"
+    "原 SN 为空时以字符串 0 作为恢复值，非空原值保持不变；记录原值与恢复目标"
   ],
   "required_capabilities": [
     "cli.get-board-sn.v1",

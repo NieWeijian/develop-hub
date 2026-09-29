@@ -146,7 +146,7 @@
           "capability": "已接入 1.0.0",
           "tool": "get-board-sn / set-board-sn / get-param / set-device-mode / reboot",
           "matrix": "当前固件与锁定模组；测试前备份，结束恢复",
-          "assertion": "calib 模式分别改上板/下板 SN，检查不串写，重启回读；rgb+depth 下检查 SN 与出图；恢复原 SN 并重启校验，最终 rgb+depth；原 SN 为空时阻塞：现有 tools 不能恢复空 SN",
+          "assertion": "calib 模式分别改上板/下板 SN，检查不串写，重启回读；rgb+depth 下检查 SN 与出图；恢复原 SN 并重启校验，最终 rgb+depth；原 SN 为空时以字符串 0 作为恢复值，非空原值保持不变；记录原值与恢复目标",
           "source": "bench/factory_runtime.py"
         },
         {

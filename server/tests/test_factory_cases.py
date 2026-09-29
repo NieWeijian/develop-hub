@@ -68,8 +68,19 @@ def test_partial_sn_write_restores_original(factory):
     assert case.result['recovery']['state']=='passed'
 
 
-def test_empty_board_sn_blocks_before_write(factory):
-    case=factory('FACTORY-BOARD-SN');case.boards=('','')
+@pytest.mark.parametrize('original,expected', [(('', ''), ('0', '0')), (('', 'LOWER'), ('0', 'LOWER')), (('UPPER', ''), ('UPPER', '0'))])
+def test_empty_board_sn_restores_zero(factory, original, expected):
+    case=factory('FACTORY-BOARD-SN');case.boards=original
+    assert case.run()==0,case.result
+    assert case.boards==expected
+    assert case.current_mode=='rgb+depth'
+    assert case.result['board_sn_restore_policy']['original']==dict(zip(('upper','lower'),original))
+    assert case.result['board_sn_restore_policy']['restore_target']==dict(zip(('upper','lower'),expected))
+    assert all(all(value for value in args) for _,command,args in case.calls if command=='set-board-sn')
+
+
+def test_invalid_nonempty_board_sn_still_blocks(factory):
+    case=factory('FACTORY-BOARD-SN');case.boards=('bad#sn','LOWER')
     assert case.run()==1 and case.result['outcome']=='blocked'
     assert not any(command.startswith('set-') for _,command,_ in case.calls)
 
