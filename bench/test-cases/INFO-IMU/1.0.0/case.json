@@ -14,5 +14,8 @@
     "同一模组 HID 有实际连续样本"
   ],
   "scope": "当前固件、锁定 USB 设备；仅检查上报和短时有效出流，不做长期趋势或性能阈值",
-  "revision": "2026-09-28-info"
+  "revision": "2026-09-28-info",
+  "retired": true,
+  "retired_reason": "IMU 采样不属于信息上报类别，保留历史记录",
+  "deprecated": true
 }

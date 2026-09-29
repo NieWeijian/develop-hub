@@ -1,7 +1,7 @@
 {
   "id": "INFO-TEMPERATURE",
   "version": "1.0.0",
-  "name": "温度上报与出流",
+  "name": "六路温度上报与统计",
   "category": "basic",
   "scenario": "telemetry",
   "risk_level": "read_only",
@@ -10,9 +10,10 @@
   "timeout_seconds": 180,
   "parameters": {},
   "assertions": [
-    "SoC、IMU、TX、左 IR、右 IR、RGB 六路温度在出流时均返回有效数值",
-    "当前模式各路可正常出流"
+    "开流采集 30 秒，约每秒一次；SoC/IMU/TX/左 IR/右 IR/RGB 六路均有效",
+    "逐路展示最低/最高/中位温度（℃）",
+    "无 get-temperature 工具接口时阻塞，不判固件失败"
   ],
-  "scope": "当前固件、锁定 USB 设备；仅检查上报和短时有效出流，不做长期趋势或性能阈值",
-  "revision": "2026-09-28-info"
+  "scope": "当前固件；短时上报检查与统计，保存原始数据及开流前后图片；不属于长稳测试",
+  "revision": "2026-09-29-information-contract"
 }

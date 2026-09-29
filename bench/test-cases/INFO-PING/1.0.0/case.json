@@ -8,11 +8,18 @@
   "command": "ping",
   "entrypoint": "test-cases/INFO-PING/1.0.0/run.py",
   "timeout_seconds": 180,
-  "parameters": {},
+  "parameters": {
+    "max_rtt_ms": {
+      "type": "number",
+      "default": 50,
+      "description": "每次 RTT 上限，单位 ms"
+    }
+  },
   "assertions": [
-    "空闲及出流期间各 10 次 XU ping 均收到有效 RTT",
-    "记录 p50/p95/p99 和原始 RTT"
+    "空闲及开流各 10 次 ping 全部响应",
+    "每次 RTT ≤ 阈值（默认 50 ms）",
+    "展示最小/平均/中位/最大 RTT 与每次读数"
   ],
-  "scope": "当前固件、锁定 USB 设备；仅检查上报和短时有效出流，不做长期趋势或性能阈值",
-  "revision": "2026-09-28-info"
+  "scope": "当前固件；短时上报检查与统计，保存原始数据及开流前后图片；不属于长稳测试",
+  "revision": "2026-09-29-information-contract"
 }

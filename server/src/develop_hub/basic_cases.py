@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]/'bench'
 CODES=('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP','SWITCH-ROTATE-CONTROL')+tuple(json.loads((ROOT/'switch-codes.json').read_text()))+tuple(json.loads((ROOT/'info-codes.json').read_text()))
 
-RETIRED_CODES=('SWITCH-ALGO-ASYNC', 'SWITCH-ALGO-DENOISE', 'SWITCH-ALGO-ITER', 'SWITCH-IR-BTNR')
+RETIRED_CODES=('INFO-IMU', 'SWITCH-ALGO-ASYNC', 'SWITCH-ALGO-DENOISE', 'SWITCH-ALGO-ITER', 'SWITCH-IR-BTNR')
 ACTIVE_CODES=tuple(code for code in CODES if code not in RETIRED_CODES)
 
 def sha(path): return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -41,3 +41,17 @@ def report_passed(report, case_ids):
                     and case.get('assertions_passed') == case.get('assertions_total')
                     and (case.get('recovery') or {}).get('state') != 'failed'
                     for case in cases))
+
+
+def validate_parameters(code, parameters):
+    import math
+    from fastapi import HTTPException
+    spec = definition(code).get('parameters', {})
+    if set(parameters) - set(spec):
+        raise HTTPException(422, 'Unsupported case parameters')
+    if not code.startswith('INFO-'):
+        return
+    for key, value in parameters.items():
+        maximum = {'max_rtt_ms': 30000, 'window_seconds': 30, 'fps_tolerance_percent': 50}[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value <= maximum:
+            raise HTTPException(422, 'Invalid parameter: ' + key)

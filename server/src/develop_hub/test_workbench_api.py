@@ -397,6 +397,9 @@ async def create_test_round(
                 raise HTTPException(status_code=422, detail=f'用例尚未适配：{case.code}')
             adapter = definition(case.code)
             parameters = payload.test_case_parameters.get(case.id, {})
+            if case.code.startswith('INFO-'):
+                from .basic_cases import validate_parameters
+                validate_parameters(case.code, parameters)
             if set(parameters) - set(adapter.get('parameters', {})):
                 raise HTTPException(status_code=422, detail=f'用例参数未定义：{case.code}')
             if 'target_fov' in parameters:

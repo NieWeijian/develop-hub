@@ -1,62 +1,121 @@
+import json
+import re
 import sys
 from pathlib import Path
-
-sys.path.insert(0, '/home/nwj/develop-hub/bench')
+from types import SimpleNamespace
 
 import pytest
-import telemetry_runtime
-from telemetry_runtime import CHANNELS, InfoCase, ping_samples, status_count, temperatures
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'bench'))
+import telemetry_runtime as rt
+from develop_hub.basic_cases import ACTIVE_CODES, validate_parameters
+from fastapi import HTTPException
 
 
-def test_temperature_requires_all_six_numeric_channels():
-    text = 'soc=42.1 imu=36.2 tx=41.0 ir_l=35.4 ir_r=35.5 rgb=38.0'
-    assert tuple(temperatures(text)) == CHANNELS
-    for bad in (text.replace('imu=36.2', 'imu=na'), text.replace('rgb=38.0', ''),
-                text.replace('tx=41.0', 'tx=nan')):
-        with pytest.raises(ValueError):
-            temperatures(bad)
-
-
-def test_ping_requires_all_samples():
-    text = ''.join(f'ping {i}: {i}.25 ms\n' for i in range(1, 11))
-    assert len(ping_samples(text, 10)) == 10
-    with pytest.raises(ValueError):
-        ping_samples(text.splitlines()[0], 10)
-
-
-def test_status_counts_require_named_model():
-    assert status_count('sensor: sc132gs count=3 (all present)', 'sensor', 'sc132gs') == 3
-    assert status_count('imu iio: icm42607 count=1 (present)', 'imu iio', 'icm42607') == 1
-    with pytest.raises(ValueError):
-        status_count('sensor: other count=3', 'sensor', 'sc132gs')
-
-
-def test_temperature_case_records_stream_and_rejects_missing_channel(tmp_path, monkeypatch):
+@pytest.fixture
+def factory(tmp_path, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(rt.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(rt.time, 'sleep', lambda duration: clock.__setitem__(0, clock[0] + duration))
+    monkeypatch.setattr(rt.subprocess, 'run', lambda *a, **k: SimpleNamespace(stdout='get-temperature', stderr=''))
     class Capture:
-        def __init__(self, case, label):
-            self.case = case
-            self.label = label
-        def snapshot(self):
-            self.case.check('stream', 'advancing frames', 12, True)
-        def close(self):
-            pass
-    monkeypatch.setattr(telemetry_runtime, 'Capture', Capture)
-    monkeypatch.setattr(telemetry_runtime.time, 'sleep', lambda seconds: None)
-    tool = tmp_path / 'ctl'
-    tool.write_bytes(b'fake')
-    answer = 'soc=42.1 imu=36.2 tx=41.0 ir_l=35.4 ir_r=35.5 rgb=38.0'
-    monkeypatch.setattr(InfoCase, 'call', lambda self, step, *args: answer)
-    data = {'tool': str(tool), 'tool_sha256': telemetry_runtime.digest(tool), 'parameters': {}}
-    # Fake XU trace stands in for the control tool's trace output.
-    (tmp_path / 'ok').mkdir()
-    case = InfoCase('INFO-TEMPERATURE', data, tmp_path / 'ok')
-    (case.out / 'protocol.jsonl').write_text('trace\n')
+        def __init__(self, case, label): self.case = case
+        def snapshot(self, generation=0): self.case.check('stream', 'advancing frames', 12, True)
+        def close(self): pass
+    monkeypatch.setattr(rt, 'Capture', Capture)
+    tool = tmp_path / 'tool'; tool.write_bytes(b'fake')
+    def create(code, answer, parameters=None):
+        case = rt.InfoCase(code, {'tool': str(tool), 'tool_sha256': rt.digest(tool), 'parameters': parameters or {}}, tmp_path / code)
+        (case.out / 'protocol.jsonl').write_text('trace\n')
+        case.call = answer
+        return case
+    return create
+
+
+@pytest.fixture
+def historical():
+    return json.loads((Path(__file__).parent / 'fixtures/info/sensor-status.json').read_text())
+
+
+def test_sensor_role_mapping(historical):
+    assert set(rt.sensor_mapping(historical['sensor'])) == {'ir_l', 'ir_r', 'rgb'}
+    for text in (historical['sensor'].replace('3-0032', '3-0030'), historical['sensor'].replace('m01_b', 'm00_b'), historical['sensor'].replace('count=3', 'count=2')):
+        with pytest.raises(ValueError): rt.sensor_mapping(text)
+
+
+def test_proc_contract_rejects_missing_nodes_and_fields(historical):
+    assert len(rt.vicap_stats(historical['vicap'])) == 3
+    assert len(rt.isp_stats(historical['isp'])) == 3
+    for key, parser, field in [('vicap', rt.vicap_stats, 'frame amount:'), ('isp', rt.isp_stats, 'ErrCnt:')]:
+        with pytest.raises(ValueError): parser(historical[key].split('### /proc/', 2)[0])
+        with pytest.raises(ValueError): parser(historical[key].replace(field, 'missing:'))
+
+
+def sensor_answer(historical, fault=None):
+    def answer(step, *args):
+        if step == 'sensor-parameters': return '[algo]\nfps=10\n'
+        if step == 'sensor-status': return historical['sensor']
+        key = 'vicap' if step.startswith('vicap') else 'isp'
+        text = historical[key]
+        if step.endswith('-1'):
+            pattern = r'(frame amount:)(\d+)' if key == 'vicap' else r'(\(frame:)(\d+)'
+            delta = 0 if fault == 'stalled' else (-1 if fault == 'reset' else 50)
+            text = re.sub(pattern, lambda m: m[1] + str(int(m[2]) + delta), text)
+            if fault == 'cif_error': text = text.replace('all err count:0', 'all err count:1')
+            if fault == 'isp_error': text = text.replace('ErrCnt:0', 'ErrCnt:1')
+            if fault == 'loss': text = text.replace('frameloss:0', 'frameloss:1')
+            if fault == 'fps': text = re.sub(r'fps:[\d.]+', 'fps:1.000', text)
+        return text
+    return answer
+
+
+@pytest.mark.parametrize('fault', [None, 'stalled', 'reset', 'cif_error', 'isp_error', 'loss', 'fps'])
+def test_sensor_window_judgement(factory, historical, fault):
+    case = factory('INFO-SENSORS', sensor_answer(historical, fault))
+    assert case.run() == (0 if fault is None else 1)
+    assert case.result['outcome'] == ('passed' if fault is None else 'failed')
+
+
+@pytest.mark.parametrize('rate,limit,passed', [(50, None, True), (50.01, None, False), (60, 60, True)])
+def test_ping_threshold_and_visible_values(factory, rate, limit, passed):
+    answer = lambda *args: '\n'.join(f'ping {i}: {rate} ms' for i in range(1, 11))
+    case = factory('INFO-PING', answer, {} if limit is None else {'max_rtt_ms': limit})
+    assert case.run() == (0 if passed else 1)
+    rtt = [a for a in case.result['assertions'] if 'RTT' in a['name']]
+    assert len(rtt) == 2
+    assert rtt[0]['actual']['max_ms'] == rate
+
+
+def test_temperature_all_channels_30_seconds_and_summary(factory):
+    readings = iter(range(31))
+    def answer(*args):
+        value = next(readings)
+        return ' '.join(f'{channel}={value}' for channel in rt.CHANNELS)
+    case = factory('INFO-TEMPERATURE', answer)
     assert case.run() == 0
-    assert case.result['outcome'] == 'passed'
-    assert len(case.result['files']) == 1
-    missing = answer.replace('imu=36.2', 'imu=na')
-    monkeypatch.setattr(InfoCase, 'call', lambda self, step, *args: missing)
-    other = InfoCase('INFO-TEMPERATURE', data, tmp_path / 'bad')
-    (other.out / 'protocol.jsonl').write_text('trace\n')
-    assert other.run() == 1
-    assert other.result['outcome'] == 'error'
+    data = json.loads((case.out / 'artifacts/temperatures.json').read_text())
+    assert data['duration_seconds'] == 30
+    assert len(data['summary']) == 6
+    for stats in data['summary'].values():
+        assert stats == {'min_c': 0, 'max_c': 30, 'median_c': 15, 'samples': 31}
+
+
+def test_temperature_missing_tool_is_blocked_before_capture(factory, monkeypatch):
+    case = factory('INFO-TEMPERATURE', lambda *a: pytest.fail('Must not call module'))
+    monkeypatch.setattr(rt.subprocess, 'run', lambda *a, **k: SimpleNamespace(stdout='old tool', stderr=''))
+    monkeypatch.setattr(rt, 'Capture', lambda *a: pytest.fail('Must not open stream'))
+    assert case.run() == 1
+    assert case.result['outcome'] == 'blocked'
+
+
+def test_temperature_invalid_channel_fails(factory):
+    case = factory('INFO-TEMPERATURE', lambda *a: 'soc=40 imu=na tx=40 ir_l=40 ir_r=40 rgb=40')
+    assert case.run() == 1
+    assert case.result['outcome'] == 'failed'
+
+
+def test_parameter_validation_and_imu_retirement():
+    assert 'INFO-IMU' not in ACTIVE_CODES
+    validate_parameters('INFO-PING', {'max_rtt_ms': 50})
+    for value in [0, -1, True, float('nan'), '50']:
+        with pytest.raises(HTTPException): validate_parameters('INFO-PING', {'max_rtt_ms': value})

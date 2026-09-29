@@ -179,8 +179,8 @@
           "name": "控制链路与 RTT",
           "capability": "已接入 1.0.0",
           "tool": "ping",
-          "matrix": "空闲 10 次 / 当前模式开流 10 次",
-          "assertion": "每次 XU ping 返回有效 RTT；记录原始样本和 p50/p95/p99。长期稳定性另测。",
+          "matrix": "空闲/开流各 10 次；默认上限 50 ms",
+          "assertion": "空闲及开流各 10 次 ping 全部响应；每次 RTT ≤ 阈值（默认 50 ms）；展示最小/平均/中位/最大 RTT 与每次读数",
           "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
         },
         {
@@ -188,26 +188,17 @@
           "name": "Sensor / VICAP / ISP 上报",
           "capability": "已接入 1.0.0",
           "tool": "sensor-status / vicap-status / isp-status",
-          "matrix": "当前设备模式开流期间",
-          "assertion": "三路 SC132GS、VICAP 和 ISP 状态有效，当前模式各路正常出流。",
-          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
-        },
-        {
-          "code": "INFO-IMU",
-          "name": "IMU 上报",
-          "capability": "已接入 1.0.0",
-          "tool": "imu-status + imu",
-          "matrix": "进程 / IIO / 同一 USB 端口 HID 实际样本",
-          "assertion": "进程运行、型号枚举、实际样本窗口均有证据。",
+          "matrix": "三路 Sensor/CIF/ISP；默认窗口 5 s，10 fps ±10%",
+          "assertion": "三个唯一 SC132GS，验证左 IR/右 IR/RGB 角色映射；三个 rkcif 节点齐全，窗口帧计数前进，错误增量为 0；实际 FPS 接近 10 fps（默认 ±10%），同时检查上报值和窗口计数速率；三个 rkisp 节点齐全，帧计数前进，ErrCnt/frameloss 增量为 0",
           "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
         },
         {
           "code": "INFO-TEMPERATURE",
-          "name": "温度上报与出流",
+          "name": "六路温度上报与统计",
           "capability": "已接入 1.0.0",
           "tool": "get-temperature + stream",
-          "matrix": "当前设备模式开流，六路温度各读取三次",
-          "assertion": "SoC、IMU、TX、IR 左右、RGB 均有有效温度读数；不测温度阈值或长期 FPS。",
+          "matrix": "六路温度，30 秒，约 1 Hz 采样",
+          "assertion": "开流采集 30 秒，约每秒一次；SoC/IMU/TX/左 IR/右 IR/RGB 六路均有效；逐路展示最低/最高/中位温度（℃）；无 get-temperature 工具接口时阻塞，不判固件失败",
           "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
         }
       ]

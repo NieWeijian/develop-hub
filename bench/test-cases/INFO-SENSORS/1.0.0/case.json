@@ -8,12 +8,22 @@
   "command": "sensor-status / vicap-status / isp-status",
   "entrypoint": "test-cases/INFO-SENSORS/1.0.0/run.py",
   "timeout_seconds": 180,
-  "parameters": {},
+  "parameters": {
+    "window_seconds": {
+      "type": "number",
+      "default": 5
+    },
+    "fps_tolerance_percent": {
+      "type": "number",
+      "default": 10
+    }
+  },
   "assertions": [
-    "三路 SC132GS Sensor 均被枚举",
-    "开流期间 VICAP、ISP 状态有效",
-    "各路可正常出流"
+    "三个唯一 SC132GS，验证左 IR/右 IR/RGB 角色映射",
+    "三个 rkcif 节点齐全，窗口帧计数前进，错误增量为 0",
+    "实际 FPS 接近 10 fps（默认 ±10%），同时检查上报值和窗口计数速率",
+    "三个 rkisp 节点齐全，帧计数前进，ErrCnt/frameloss 增量为 0"
   ],
-  "scope": "当前固件、锁定 USB 设备；仅检查上报和短时有效出流，不做长期趋势或性能阈值",
-  "revision": "2026-09-28-info"
+  "scope": "当前固件；短时上报检查与统计，保存原始数据及开流前后图片；不属于长稳测试",
+  "revision": "2026-09-29-information-contract"
 }
