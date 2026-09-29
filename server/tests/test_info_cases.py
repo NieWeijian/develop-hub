@@ -21,6 +21,7 @@ def factory(tmp_path, monkeypatch):
     class Capture:
         def __init__(self, case, label): self.case = case
         def snapshot(self, generation=0): self.case.check('stream', 'advancing frames', 12, True)
+        def negotiated_streams(self): return {'rgb': {'fps': 10}}
         def close(self): pass
     monkeypatch.setattr(rt, 'Capture', Capture)
     tool = tmp_path / 'tool'; tool.write_bytes(b'fake')
@@ -53,7 +54,7 @@ def test_proc_contract_rejects_missing_nodes_and_fields(historical):
 
 def sensor_answer(historical, fault=None):
     def answer(step, *args):
-        if step == 'sensor-parameters': return '[algo]\nfps=10\n'
+        if step == 'sensor-parameters': return '[system]\nusb_mode=calib\n[algo]\nfps=0\n'
         if step == 'sensor-status': return historical['sensor']
         key = 'vicap' if step.startswith('vicap') else 'isp'
         text = historical[key]
@@ -119,3 +120,18 @@ def test_parameter_validation_and_imu_retirement():
     validate_parameters('INFO-PING', {'max_rtt_ms': 50})
     for value in [0, -1, True, float('nan'), '50']:
         with pytest.raises(HTTPException): validate_parameters('INFO-PING', {'max_rtt_ms': value})
+
+
+@pytest.mark.parametrize('rgb,ir', [(10,10), (20,10), (30,10)])
+def test_sensor_targets_use_negotiated_rgb_rate(rgb, ir):
+    assert rt.sensor_fps_targets({'rgb': {'fps': rgb}}) == {'rgb': rgb, 'ir_l': ir, 'ir_r': ir}
+
+
+def test_default_algorithm_fps_is_recorded_not_rejected(factory, historical):
+    case = factory('INFO-SENSORS', sensor_answer(historical))
+    assert case.run() == 0
+    config = json.loads((case.out / 'artifacts/sensor-configuration.json').read_text())
+    assert config['algorithm_fps_configuration'] == '0'
+    assert config['device_mode'] == 'calib'
+    assert config['expected_sensor_fps'] == {'rgb': 10, 'ir_l': 10, 'ir_r': 10}
+    assert not any(a['name'] == 'RV1126B FPS tier' for a in case.result['assertions'])

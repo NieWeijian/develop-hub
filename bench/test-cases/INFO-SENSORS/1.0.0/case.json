@@ -21,11 +21,11 @@
   "assertions": [
     "三个唯一 SC132GS，验证左 IR/右 IR/RGB 角色映射",
     "三个 rkcif 节点齐全，窗口帧计数前进，错误增量为 0",
-    "实际 FPS 接近 10 fps（默认 ±10%），同时检查上报值和窗口计数速率",
+    "按 RGB 协商帧率及固件分频规则确定各路 Sensor FPS（默认 ±10%），检查上报值和窗口计数速率",
     "三个 rkisp 节点齐全，帧计数前进，ErrCnt/frameloss 增量为 0"
   ],
   "scope": "当前固件；短时上报检查与统计，保存原始数据及开流前后图片；不属于长稳测试",
-  "revision": "2026-09-29-information-contract",
+  "revision": "2026-09-29-negotiated-sensor-fps",
   "required_capabilities": [
     "cli.sensor-status.v1",
     "cli.vicap-status.v1",

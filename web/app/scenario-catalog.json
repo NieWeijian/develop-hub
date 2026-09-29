@@ -188,8 +188,8 @@
           "name": "Sensor / VICAP / ISP 上报",
           "capability": "已接入 1.0.0",
           "tool": "sensor-status / vicap-status / isp-status",
-          "matrix": "三路 Sensor/CIF/ISP；默认窗口 5 s，10 fps ±10%",
-          "assertion": "三个唯一 SC132GS，验证左 IR/右 IR/RGB 角色映射；三个 rkcif 节点齐全，窗口帧计数前进，错误增量为 0；实际 FPS 接近 10 fps（默认 ±10%），同时检查上报值和窗口计数速率；三个 rkisp 节点齐全，帧计数前进，ErrCnt/frameloss 增量为 0",
+          "matrix": "三路 Sensor/CIF/ISP；默认窗口 5 s，各路协商目标 ±10%",
+          "assertion": "三个唯一 SC132GS，验证左 IR/右 IR/RGB 角色映射；三个 rkcif 节点齐全，窗口帧计数前进，错误增量为 0；根据 RGB 协商 FPS 及固件分频规则确定各路目标（默认 ±10%）；三个 rkisp 节点齐全，帧计数前进，ErrCnt/frameloss 增量为 0",
           "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp"
         },
         {

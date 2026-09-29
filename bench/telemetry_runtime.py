@@ -84,6 +84,16 @@ def isp_stats(text):
     return result
 
 
+def sensor_fps_targets(streams):
+    # Firmware Pipeline::aiq_init uses negotiated RGB FPS to clock RGB and IR.
+    # algo.fps=0 means algorithm-library default, not a measured sensor rate.
+    rgb = streams['rgb']['fps']
+    if not math.isfinite(rgb) or rgb <= 0:
+        raise ValueError('Invalid negotiated RGB FPS')
+    divisor = 3 if rgb == 30 else (2 if rgb == 20 else 1)
+    return {'rgb': rgb, 'ir_l': rgb / divisor, 'ir_r': rgb / divisor}
+
+
 def counter_delta(before, after):
     if len(before) != len(after):
         raise ValueError('Counter vector changed')
@@ -176,10 +186,11 @@ class InfoCase(Case):
                 window = positive('window_seconds', 5, 30)
                 tolerance = positive('fps_tolerance_percent', 10, 50)
                 params = parse_params(self.call('sensor-parameters', 'get-param'))
-                # RV1126B currently has a single supported operating FPS tier.
-                self.check('RV1126B FPS tier', 10, params['algo']['fps'], float(params['algo']['fps']) == 10)
                 capture = Capture(self, 'sensor-status')
                 capture.snapshot()
+                streams = capture.negotiated_streams()
+                targets = sensor_fps_targets(streams)
+                self.record('sensor-configuration', {'device_mode': params.get('system', {}).get('usb_mode'), 'algorithm_fps_configuration': params.get('algo', {}).get('fps'), 'negotiated_streams': streams, 'expected_sensor_fps': targets, 'expectation_source': 'Pipeline::aiq_init: RGB negotiated FPS; IR divided by 3 at 30 FPS / 2 at 20 FPS'})
                 sensor = self.call('sensor-status', 'sensor-status')
                 try:
                     mapping = sensor_mapping(sensor)
@@ -213,8 +224,9 @@ class InfoCase(Case):
                         if kind == 'vicap':
                             elapsed = after['vicap_time'] - before['vicap_time']
                             rates = {'before_reported': previous['fps'], 'after_reported': current['fps'], 'window_measured': delta / elapsed}
-                            low, high = 10 * (1 - tolerance / 100), 10 * (1 + tolerance / 100)
-                            self.judge(node + ' actual FPS', {'target': 10, 'min': low, 'max': high, 'window_seconds': elapsed}, rates, all(low <= rate <= high for rate in rates.values()))
+                            target = targets[CIF_ROLES[node]]
+                            low, high = target * (1 - tolerance / 100), target * (1 + tolerance / 100)
+                            self.judge(node + ' actual FPS', {'target': target, 'min': low, 'max': high, 'window_seconds': elapsed}, rates, all(low <= rate <= high for rate in rates.values()))
                 capture.snapshot(1)
             elif self.code == 'INFO-IMU':
                 status = self.call('imu-status', 'imu-status')

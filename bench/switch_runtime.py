@@ -74,6 +74,17 @@ class Capture:
             for path,role in [(raw,'raw_frame'),(preview,'image'),(meta_path,'frame_metadata')]:
                 self.case.result['files'].append({'path':str(path.relative_to(self.case.out)),'role':role,'label':self.label,'stream':{1:'RGB',2:'Depth',3:'IR'}[typ],'size_bytes':path.stat().st_size,'sha256':digest(path)})
             self.case.check(self.label+' '+str(typ)+' stable frame', '>=12 valid advancing frames over >=1 second',meta,meta['consecutive_valid_frames']>=12)
+    def negotiated_streams(self):
+        streams = {}
+        for proc, _, _, typ in self.items:
+            video = proc.args[1]
+            output = subprocess.check_output(['v4l2-ctl', '-d', video, '--get-parm'], text=True, timeout=10, env={**__import__('os').environ, 'LC_ALL': 'C'})
+            match = re.search(r'Frames per second:\s*[\d.]+\s*\((\d+)/(\d+)\)', output)
+            if not match or int(match[2]) == 0 or int(match[1]) == 0:
+                raise RuntimeError('Negotiated FPS unavailable: ' + video + '; ' + output)
+            streams[{1: 'rgb', 2: 'depth', 3: 'ir'}[typ]] = {'video': video, 'fps': int(match[1]) / int(match[2]), 'raw': output}
+        return streams
+
     def close(self):
         for proc,log,_,_ in self.items:
             if proc.poll() is None:
