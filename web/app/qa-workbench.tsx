@@ -3,6 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import scenarioCatalog from './scenario-catalog.json';
+import PlatformWorkbench from './platform-workbench';
 
 import { FormEvent, useCallback, useEffect, useState, useRef } from 'react';
 
@@ -104,6 +105,7 @@ type RoundEvent = {
 };
 type Classification = {automatic_outcome?:string;outcome?:string;manual:boolean;revision:number;executed:boolean;history:{operator:string;reason:string;outcome:string|null;changed_at:string}[]};
 type TestRound = {
+  origin?: string; candidate_id?: string; validation_plan_id?: string; schedule_id?: string;
   case_classifications: Record<string,Classification>;
   case_classification_verdict: string;
   id: string; display_number: number; product_id: string; test_point_id: string | null; bench_id: string;
@@ -117,7 +119,7 @@ type TestRound = {
   product: Product; test_point: TestPoint | null; bench: TestBench; events: RoundEvent[];
 };
 
-type View = 'products' | 'rounds' | 'cases' | 'benches';
+type View = 'products' | 'rounds' | 'cases' | 'benches' | 'releases' | 'schedules';
 type Screen = View | 'product-detail' | 'product-wizard' | 'round-wizard' | 'round-detail';
 type Dialog = 'case' | 'point' | 'bench';
 
@@ -422,7 +424,7 @@ export default function QaWorkbench({ onManageRepositories }: { onManageReposito
     const timer=window.setTimeout(()=>{
     const params=new URLSearchParams(window.location.search);
     const target=params.get('qa');
-    if(target && ['products','rounds','cases','benches','product-detail','round-detail'].includes(target)) setScreen(target as Screen);
+    if(target && ['products','rounds','cases','benches','releases','schedules','product-detail','round-detail'].includes(target)) setScreen(target as Screen);
     setProductId(params.get('product') || '');setRoundId(params.get('round') || '');
     if(params.get('tab')==='baseline')setTab('baseline');
     setLocationReady(true);
@@ -574,21 +576,22 @@ export default function QaWorkbench({ onManageRepositories }: { onManageReposito
     });
   }
   function roundList(items: TestRound[]) {
-    return items.length ? <div className="wb-history">{items.map(item => <button key={item.id} onClick={() => openRound(item)}><span><strong>TEST-{String(item.display_number).padStart(6,'0')}</strong><small>{formatDate(item.created_at)}</small></span><span>{item.product.name}<small>Change {item.change_number} · PS{item.patchset_number} · {item.commit_sha.slice(0,12)}</small></span><StatusPill status={item.status} label={roundStatus[item.status] || item.status} /></button>)}</div> : <p className="quiet-row">暂无测试历史。从基线可用的产品创建第一轮测试。</p>;
+    return items.length ? <div className="wb-history">{items.map(item => <button key={item.id} onClick={() => openRound(item)}><span><strong>TEST-{String(item.display_number).padStart(6,'0')}</strong><small>{formatDate(item.created_at)}</small></span><span>{item.product.name}<small>{({quick:'快速测试',scheduled:'定时测试',release:'发布验证',manual:'手动常规测试'} as Record<string,string>)[item.origin||'manual']} · {String((item.product_snapshot.test_point as {subject?:string}|undefined)?.subject||'当前固件')}</small></span><StatusPill status={item.status} label={roundStatus[item.status] || item.status} /></button>)}</div> : <p className="quiet-row">暂无测试历史。从基线可用的产品创建第一轮测试。</p>;
   }
 
   return <section className="test-workbench wb-workspace">
-    <nav className="tw-nav" aria-label="测试平台导航">{([['products','测试产品'],['rounds','测试轮次'],['cases','用例库'],['benches','测试台节点']] as Array<[View,string]>).map(([key,label]) => <button key={key} className={activeView === key ? 'active' : ''} onClick={() => {setScreen(key);setError(null);setNotice('');}}>{label}</button>)}<span>{loading ? '正在读取服务端状态…' : `更新于 ${formatDate(updated)}`}</span></nav>
+    <nav className="tw-nav" aria-label="测试平台导航">{([['products','快速 / 手动测试'],['schedules','常规定时测试'],['releases','发布验证'],['rounds','测试轮次'],['cases','用例库'],['benches','测试台节点']] as Array<[View,string]>).map(([key,label]) => <button key={key} className={activeView === key ? 'active' : ''} onClick={() => {setScreen(key);setError(null);setNotice('');}}>{label}</button>)}<span>{loading ? '正在读取服务端状态…' : `更新于 ${formatDate(updated)}`}</span></nav>
     {notice && <p role="status" className="wb-receipt">{notice}</p>}
     {error && <div className="error-banner" role="alert"><span>{error}</span><button aria-label="关闭错误" onClick={() => setError(null)}>×</button></div>}
+    {(screen==='releases'||screen==='schedules')&&<PlatformWorkbench key={screen} mode={screen} products={products} benches={benches} cases={orderedCases} rounds={rounds} executable={basicDefinitions.map(d=>d.id)} api={request} apiBase={apiBase()} openRound={id=>{const found=rounds.find(r=>r.id===id);if(found)openRound(found);else{setRoundId(id);setScreen('round-detail');void refresh();}}} renderParameters={(code,value,onChange)=>code==='STREAM-RGB-DEPTH'?<StreamParameterForm value={value} onChange={onChange}/>:caseParameterFields[code]?<CaseParameterForm code={code} value={value} onChange={onChange}/>:<p>此用例使用固定配置，无可调整参数。</p>}/>}
     {screen === 'products' && <>
-      <div className="tw-heading"><div><span className="panel-label">QA / PRODUCTS</span><h2>测试产品</h2><p>从产品进入，选择 Gerrit 版本和用例，启动一次完整测试。</p></div><button className="primary-button" disabled={!sdks.length || loading} onClick={newProduct}>＋ 新建测试产品</button></div>
+      <div className="tw-heading"><div><span className="panel-label">QA / PRODUCTS</span><h2>快速 / 手动测试</h2><p>快速检查当前模组固件，或手动选择 Gerrit 版本编译、烧录和测试。</p></div><button className="primary-button" disabled={!sdks.length || loading} onClick={newProduct}>＋ 新建测试产品</button></div>
       {!sdks.length && !loading && <p className="tw-warning">175 尚未注册 SDK。请由管理员预先登记本地 SDK；测试产品只从登记列表选择。</p>}
       <ol className="wb-process-guide"><li>选择产品基线</li><li>锁定 Gerrit Patch Set</li><li>选择测试台与用例</li><li>编译 → 烧录 → 版本确认</li><li>检查断言与下载报告</li></ol><p className="wb-build-hint">每轮记录精确版本、镜像摘要、设备身份和实际结果。编译或烧录成功不代表测试通过；失败后创建新轮次，历史结果不会覆盖。</p><div className="wb-products">{products.map(item => { const history = rounds.filter(r => r.product_id === item.id); const last = history[0]; return <button className="panel wb-product" key={item.id} onClick={() => openProduct(item)}><header><span className="panel-label">{item.code}</span><StatusPill status={item.status} label={productStatus[item.status]} /></header><h3>{item.name}</h3><p>{item.gerrit_project}</p><Facts items={[["Board Config",item.board_config],["Manifest",item.manifest_snapshot.manifest_commit?.slice(0,12)],["测试轮次",history.length]]} /><footer><span>{last ? `最近 · ${last.product_snapshot.developer_mode ? '当前固件' : `${last.change_number}/PS${last.patchset_number}`}` : '尚未创建 Test Round'}</span><span>进入产品 →</span></footer></button>; })}</div>
       {!products.length && !loading && <div className="empty-state panel"><h2>从一个明确的产品基线开始</h2><p>一个 SDK、一份 Manifest、一个被测应用 Repo、一个 Board Config。</p></div>}
     </>}
     {screen === 'product-detail' && product && <>
-      <div className="tw-heading"><div><button className="tw-back" onClick={() => setScreen('products')}>← 测试产品</button><span className="panel-label">{product.code}</span><h2>{product.name}</h2><p>{product.gerrit_project} · {product.board_config}</p></div><div className="tw-heading-actions"><StatusPill status={product.status} label={productStatus[product.status]} /><button className="primary-button" disabled={busy || product.status !== 'ready'} onClick={newRound}>＋ 新建测试轮次</button></div></div>
+      <div className="tw-heading"><div><button className="tw-back" onClick={() => setScreen('products')}>← 测试产品</button><span className="panel-label">{product.code}</span><h2>{product.name}</h2><p>{product.gerrit_project} · {product.board_config}</p></div><div className="tw-heading-actions"><StatusPill status={product.status} label={productStatus[product.status]} /><button className="primary-button" disabled={busy || product.status !== 'ready'} onClick={()=>{setDeveloperMode(false);newRound();}}>编译烧录测试</button><button className="primary-button" disabled={busy} onClick={()=>{newRound();setDeveloperMode(true);setFlashFirmware(false);setSelectedCases([]);}}>快速测试当前模组</button></div></div>
       <div className="wb-product-tabs" role="tablist" aria-label="产品详情">{([['history','测试时间线'],['points',`测试点 · ${points.length}`],['baseline','SDK / Manifest 基线']] as Array<[ProductTab,string]>).map(([key,label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
       {tab === 'history' && <section className="panel"><header><h3>测试历史</h3><span>{productRounds.length} 轮</span></header>{roundList(productRounds)}</section>}
       {tab === 'points' && <section className="panel"><header><div><h3>Gerrit 测试点</h3><p>{product.gerrit_project}</p></div><button className="secondary-button" onClick={() => {setPointReady(false); setError(null); setDialog('point');}}>＋ 登记 Patchset</button></header>{points.map(point => <div className="wb-point" key={point.id}><strong>{point.change_number} / PS{point.patchset_number}</strong><span>{point.subject}<small>{point.branch} · {point.commit_sha}</small><small>Owner：{point.owner || '—'} · 提交时间：{formatDate(point.submitted_at)}</small></span><StatusPill status={point.ready?'ready':'blocked'} label={point.ready?'可选择':'等待依赖'} /></div>)}{!points.length && <p className="quiet-row">粘贴 Gerrit 链接即可查询并登记 Patchset，服务端会核验 Ref。</p>}</section>}

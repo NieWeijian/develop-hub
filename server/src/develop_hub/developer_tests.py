@@ -36,7 +36,7 @@ async def create(payload,db,workflow):
     matches=[d for d in devices if d['serial']==payload.device_serial]
     if len(matches)!=1:raise HTTPException(422,'Select one connected module')
     device=matches[0];number=next_round_number(db)
-    row=TestRound(id=new_id(),display_number=number,product_id=product.id,test_point_id=None,bench_id=bench.id,
+    row=TestRound(id=new_id(),display_number=number,origin='quick',product_id=product.id,test_point_id=None,bench_id=bench.id,
         product_snapshot={'id':product.id,'name':product.name,'developer_mode':True,'execute_test_cases':True,'device':device,
                           'test_point':{'subject':'当前模组固件 · '+device['version']}},
         bench_snapshot={k:getattr(bench,k) for k in ('id','name','host','port','user','remote_root')},

@@ -764,3 +764,28 @@ h1 { margin: 6px 0 0; font-family: Georgia, "Noto Serif SC", serif; font-size: 3
 .stream-parameters p { color: #63736c; font-size: 12px; margin: 8px 0 14px; }
 .stream-threshold-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
 @media (max-width: 800px) { .stream-threshold-grid { grid-template-columns: 1fr; } }
+
+/* Version coverage and scheduled regression */
+.platform-create-grid,.platform-plan-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:16px;align-items:start;margin:16px 0}
+.platform-plan-card{display:flex;flex-direction:column;gap:10px;text-align:left;cursor:pointer}
+.platform-plan-card.selected{outline:2px solid #365f4f}
+.platform-plan-card progress{width:100%;accent-color:#365f4f}
+.platform-actions{display:flex;gap:10px;flex-wrap:wrap;margin:20px 0}
+.platform-requirement{padding:14px 0;border-bottom:1px solid #dbe4df}
+.platform-requirement-row{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.platform-requirement-row>label{display:flex;flex:1;min-width:260px;gap:10px;align-items:center}
+.platform-requirement-row small{display:block;color:#64766e;margin-top:5px}
+.platform-execute{border-top:1px solid #dbe4df;margin-top:24px;padding-top:20px}
+.result-pending_definition,.result-unmeasured,.result-stale,.result-queued{background:#f0f2f0;color:#59645e}
+.platform-requirement form{padding:16px;background:#f4f7f5;margin:12px 0}
+
+.platform-workbench form label{display:block;margin:12px 0;color:#34483e}
+.platform-workbench input:not([type=checkbox]),.platform-workbench select{display:block;margin-top:6px;padding:10px 12px;border:1px solid #ccd6d1;border-radius:7px;background:white;min-height:40px}
+.platform-workbench input[type=checkbox]{margin-right:9px;accent-color:#274b3d}
+.platform-workbench button:not(.platform-plan-card){padding:8px 13px;border:1px solid #cddbd3;border-radius:7px;background:#fff;cursor:pointer}
+.platform-workbench button.primary-button,.platform-workbench form>button:not([type=button]){background:#1e3d31;color:white;border-color:#1e3d31}
+.platform-workbench button:disabled{opacity:.48;cursor:not-allowed}
+.platform-workbench button:focus-visible,.platform-workbench input:focus-visible,.platform-workbench select:focus-visible{outline:2px solid #548f76;outline-offset:2px}
+.platform-workbench .form-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.platform-workbench .panel h3{margin-bottom:12px}
+@media(max-width:700px){.platform-workbench .form-columns{grid-template-columns:1fr}}

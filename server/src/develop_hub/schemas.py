@@ -541,6 +541,10 @@ class TestRoundEventView(BaseModel):
 
 class TestRoundView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+    origin: str = 'manual'
+    candidate_id: str | None = None
+    validation_plan_id: str | None = None
+    schedule_id: str | None = None
 
     id: str
     display_number: int

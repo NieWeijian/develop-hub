@@ -362,6 +362,10 @@ async def create_test_round(
     db: Session = Depends(get_db),
     workflow: TestRoundWorkflow = Depends(get_round_workflow),
 ) -> TestRound:
+    return await create_round_internal(payload, db, workflow)
+
+
+async def create_round_internal(payload, db, workflow, *, source=None, schedule_job=None):
     if payload.developer_mode:
         from .developer_tests import create
         return await create(payload,db,workflow)
@@ -371,6 +375,9 @@ async def create_test_round(
     if product.status != TestProductStatus.READY or not (product.baseline_result or {}).get("passed"):
         raise HTTPException(status_code=409, detail="Product baseline must pass before creating a Test Round")
     point = db.get(TestPoint, payload.test_point_id) if payload.test_point_id else None
+    if source:
+        from types import SimpleNamespace
+        point = SimpleNamespace(id=None, product_id=product.id, ready=True, **{k: source[k] for k in ('change_number','patchset_number','commit_sha','subject','owner')}, submitted_at=None)
     if not point or point.product_id != product.id or not point.ready:
         raise HTTPException(status_code=422, detail="Test point must be a ready Patchset from the locked product")
     bench = db.get(TestBench, payload.bench_id)
@@ -447,6 +454,9 @@ async def create_test_round(
         "baseline_result": product.baseline_result,
         "test_point": {"subject": point.subject, "owner": point.owner, "submitted_at": point.submitted_at.isoformat() if point.submitted_at else None},
     }
+    if source:
+        product_snapshot['source_ref'] = source['ref']
+        product_snapshot['source_kind'] = source['kind']
     product_snapshot["execute_test_cases"] = payload.execute_test_cases
     product_snapshot["sdk_configuration"]["artifact_patterns"] = artifact_patterns(product.board_config)
     if readiness:
@@ -495,7 +505,18 @@ async def create_test_round(
         message="Product baseline, Gerrit Patchset, bench, and Test Case configuration were snapshotted",
         details={"product_id": product.id, "gerrit_project": product.gerrit_project},
     ))
+    if schedule_job:
+        from .models import TestSchedule
+        frozen = db.get(TestSchedule, schedule_job.schedule_id).config['definitions']
+        if any(frozen.get(c['id']) != c['adapter'] for c in case_snapshot):
+            raise HTTPException(409, '用例或 tools 在准备过程中发生变化，未派发任务')
+        test_round.origin = 'scheduled'
+        test_round.schedule_id = schedule_job.schedule_id
     db.add(test_round)
+    db.flush()
+    if schedule_job:
+        schedule_job.round_id = test_round.id
+        schedule_job.source_commit = test_round.commit_sha
     db.commit()
     round_id = test_round.id
     if payload.auto_start:

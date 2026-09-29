@@ -1,0 +1,82 @@
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from .api import router
+from .codex_runner import CodexRunner
+from .config import settings
+from .db import initialize_database
+from .events import broker
+from .qa_api import router as qa_router
+from .qa_demo_api import router as qa_demo_router
+from .qa_runner import RemoteQaRunner
+from .qa_plugins import QaPluginRegistry
+from .qa_workflow import QaWorkflow
+from .test_workbench import TestRoundWorkflow
+from .test_workbench_api import router as test_workbench_router
+from .workflow import CodingWorkflow
+from .testing_platform import router as testing_platform_router, ScheduleEngine
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+    settings.ensure_directories()
+    if settings.auto_create_schema:
+        initialize_database()
+    runner = CodexRunner(settings, broker)
+    remote_qa_runner = RemoteQaRunner(settings)
+    qa_plugins = QaPluginRegistry(settings, remote_qa_runner)
+    workflow = CodingWorkflow(settings, runner, broker, qa_plugins)
+    app.state.workflow = workflow
+    app.state.qa_plugins = qa_plugins
+    await workflow.recover_interrupted_runs()
+    qa_workflow = QaWorkflow(settings, remote_qa_runner)
+    app.state.qa_workflow = qa_workflow
+    await qa_workflow.recover_interrupted_runs()
+    test_round_workflow = TestRoundWorkflow(settings)
+    app.state.test_round_workflow = test_round_workflow
+    await test_round_workflow.recover_interrupted_rounds()
+    scheduler = ScheduleEngine(test_round_workflow)
+    app.state.test_scheduler = scheduler
+    scheduler.start()
+    try:
+        yield
+    finally:
+        await scheduler.stop()
+
+
+app = FastAPI(
+    title="Develop Hub API",
+    version="0.1.0",
+    description="175 control plane for controlled Codex coding workflows",
+    lifespan=lifespan,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(settings.cors_origins),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(router)
+app.include_router(qa_router)
+app.include_router(qa_demo_router)
+app.include_router(test_workbench_router)
+app.include_router(testing_platform_router)
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    return {"service": "develop-hub", "docs": "/docs", "health": "/api/health"}
+
+
+def run() -> None:
+    uvicorn.run("develop_hub.main:app", host=settings.host, port=settings.port, reload=False)
+
+
+if __name__ == "__main__":
+    run()

@@ -280,6 +280,11 @@ class QaDemoRun(Base):
 
 class TestRound(Base):
     __tablename__ = "test_rounds"
+    origin: Mapped[str] = mapped_column(String(20), default='manual', server_default='manual')
+    candidate_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    validation_plan_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    schedule_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     display_number: Mapped[int] = mapped_column(Integer, unique=True, index=True)
@@ -615,3 +620,60 @@ class QaCaseExecution(Base):
 
     qa_run: Mapped[QaRun] = relationship(back_populates="case_executions")
     test_case: Mapped[TestCase] = relationship(back_populates="executions")
+
+
+class ReleaseCandidate(Base):
+    __tablename__ = 'release_candidates'
+    __table_args__ = (UniqueConstraint('product_id', 'name', name='uq_release_candidate_name'),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_id: Mapped[str] = mapped_column(ForeignKey('test_products.id'), index=True)
+    source_round_id: Mapped[str] = mapped_column(ForeignKey('test_rounds.id'))
+    name: Mapped[str] = mapped_column(String(160))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ReleasePlan(Base):
+    __tablename__ = 'release_plans'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    candidate_id: Mapped[str] = mapped_column(ForeignKey('release_candidates.id'), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    requirements: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    final_report: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ValidationEvidence(Base):
+    __tablename__ = 'validation_evidence'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    plan_id: Mapped[str] = mapped_column(ForeignKey('release_plans.id'), index=True)
+    requirement_id: Mapped[str] = mapped_column(String(36))
+    requirement_hash: Mapped[str] = mapped_column(String(64))
+    round_id: Mapped[str | None] = mapped_column(ForeignKey('test_rounds.id'), nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TestSchedule(Base):
+    __tablename__ = 'test_schedules'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(160))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    config: Mapped[dict[str, Any]] = mapped_column(JSON)
+    next_fire_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ScheduleRun(Base):
+    __tablename__ = 'schedule_runs'
+    __table_args__ = (UniqueConstraint('schedule_id', 'scheduled_at', name='uq_schedule_occurrence'),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    schedule_id: Mapped[str] = mapped_column(ForeignKey('test_schedules.id'), index=True)
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    state: Mapped[str] = mapped_column(String(32), default='queued')
+    message: Mapped[str] = mapped_column(Text, default='')
+    round_id: Mapped[str | None] = mapped_column(ForeignKey('test_rounds.id'), nullable=True)
+    source_commit: Mapped[str] = mapped_column(String(64), default='')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

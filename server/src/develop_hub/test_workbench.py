@@ -761,14 +761,20 @@ class TestRoundWorkflow:
             if task and not task.done():
                 raise TestWorkbenchError("This Test Round already has an active task")
             with SessionLocal() as db:
+                from .testing_platform import bench_busy
+                requested = db.get(TestRound, round_id)
+                if requested and bench_busy(db, requested.bench_id, round_id):
+                    raise TestWorkbenchError('测试台正在执行其他轮次，请等待完成后启动')
                 claimed = db.execute(update(TestRound).where(TestRound.id == round_id, TestRound.status == TestRoundStatus.CREATED).values(status=TestRoundStatus.CHECKING_OUT, started_at=now()))
                 if claimed.rowcount != 1:
                     raise TestWorkbenchError('Only a newly created Test Round may start; create a new round to retry')
                 db.commit()
             with SessionLocal() as db:
                 quick = db.get(TestRound, round_id).product_snapshot.get("developer_mode")
+                release = db.get(TestRound, round_id).origin == 'release'
             from .developer_tests import dispatch
-            task = asyncio.create_task(dispatch(self,round_id) if quick else self._pipeline(round_id), name=f"test-round-{round_id}")
+            from .testing_platform import dispatch_candidate
+            task = asyncio.create_task(dispatch(self,round_id) if quick else dispatch_candidate(self,round_id) if release else self._pipeline(round_id), name=f"test-round-{round_id}")
             self._tasks[round_id] = task
             task.add_done_callback(lambda _task: self._tasks.pop(round_id, None))
 
@@ -849,7 +855,7 @@ class TestRoundWorkflow:
                     raise TestWorkbenchError("Test Round is not ready to start")
                 test_round.started_at = now()
                 product = test_round.product
-                source_ref = f"refs/changes/{test_round.change_number % 100:02d}/{test_round.change_number}/{test_round.patchset_number}"
+                source_ref = test_round.product_snapshot.get("source_ref") or f"refs/changes/{test_round.change_number % 100:02d}/{test_round.change_number}/{test_round.patchset_number}"
                 sdk = product.sdk_repository
                 repository = product.tested_repository
                 if not test_round.bench_snapshot:
