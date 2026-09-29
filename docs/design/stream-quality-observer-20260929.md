@@ -9,3 +9,5 @@ The adapter uses existing per-frame calculations: FPS=count/formal-duration; V4L
 Sources and patch are in bench/stream-observer; build.sh links unchanged firmware common/v4l2_capture.cpp. provenance.json records upstream commit, source/patch/observer/binary SHA-256. Runtime definitions snapshot the derived binary SHA and the package version; raw CSV and official tool logs remain round artifacts. Existing rounds keep their original results and packages.
 
 Verification: synthetic C++ frame input exercises warmup exclusion, fixed-window FPS, missing sequence and timestamp latency through the real observer. Python metric regression tests and full server tests apply. No hardware round is created by deployment.
+
+Execution order: bind and confirm mode, time-sync, launch capture, warmup, shared formal window, close capture, reset clock and restore mode. The start-stream evidence step records the actual command, PID, start/end time and exit code, including launch failure.

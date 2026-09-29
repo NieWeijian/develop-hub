@@ -73,8 +73,25 @@ def measure(folder):
 
 
 class StreamCase(FactoryCase):
+    def sync_and_start_capture(self, args, log):
+        sync_start=time.monotonic_ns()//1000
+        try:
+            self.call('time-sync','time-sync',sync_start)
+        except BaseException:
+            log.close()
+            raise
+        sync_end=time.monotonic_ns()//1000
+        step={'id':'start-stream','command':args,'started_at':timestamp(),'exit_code':None,'state':'starting','log_path':'artifacts/uvc_host_stream.log'}
+        self.result['steps'].append(step);self.save()
+        try:
+            proc=subprocess.Popen(args,stdout=log,stderr=log)
+        except BaseException as exc:
+            step.update(state='start_failed',error=str(exc),completed_at=timestamp());log.close();self.save();raise
+        step.update(state='running',pid=proc.pid)
+        return proc,step,sync_start,sync_end
+
     def run(self):
-        processes=[];mode=None;synced=False
+        processes=[];mode=None;synced=False;capture_step=None
         try:
             p=validate(self.data.get('parameters') or {});(self.out/'artifacts').mkdir(exist_ok=True)
             self.check('Tool SHA-256',self.data['tool_sha256'],digest(Path(self.data['tool'])),digest(Path(self.data['tool']))==self.data['tool_sha256'])
@@ -96,7 +113,8 @@ class StreamCase(FactoryCase):
             if set(nodes)!={'rgb','depth'}:raise Blocked('RGB and Depth nodes required at locked USB port')
             log=(self.out/'artifacts/uvc_host_stream.log').open('wb')
             args=[str(helper),'--device',nodes['rgb'],'--metrics-root',str(self.out/'artifacts'),'--duration',str(p['duration_seconds']),'--warmup',str(p['warmup_seconds']),'--stall',str(p['stall_timeout_seconds']),'--rgb-width',str(p['rgb_width']),'--rgb-height',str(p['rgb_height']),'--depth-width',str(p['depth_width']),'--depth-height',str(p['depth_height']),'--fps',str(p['fps'])]
-            proc=subprocess.Popen(args,stdout=log,stderr=log)
+            synced=True
+            proc,capture_step,sync_start,sync_end=self.sync_and_start_capture(args,log)
             self.result['capture_tool']={'name':'uvc_host_stream + Hub metrics observer','command':args,'sha256':expected,'upstream_commit':package.get('upstream_commit'),'upstream_binary_sha256':package.get('files',{}).get('bin/uvc_host_stream')};self.save()
             for kind in ('rgb','depth'):
                 processes.append((kind,proc,log,self.out/'artifacts'/kind))
@@ -112,12 +130,9 @@ class StreamCase(FactoryCase):
                 actual=int(m[1])/int(m[2]) if m and int(m[2]) else None
                 self.check(kind+' negotiated FPS',p['fps'],actual,actual==p['fps'])
                 configuration[kind]={'node':nodes[kind],'width':p[kind+'_width'],'height':p[kind+'_height'],'fps':actual,'format':'NV12' if kind=='rgb' else 'YUYV (16-bit depth transport)'}
-            sync_start=time.monotonic_ns()//1000;synced=True
-            self.call('time-sync','time-sync',sync_start)
-            sync_end=time.monotonic_ns()//1000
             begin=time.monotonic_ns()//1000+3000000
             for _,_,_,folder in processes:(folder/'begin-us').write_text(str(begin))
-            self.result['measurement_contract']={'streams':configuration,'duration_seconds':p['duration_seconds'],'warmup_seconds_minimum':p['warmup_seconds'],'warmup_rule':'Both streams: 3 consecutive full 1-second windows within requested FPS ±20%; timeout 120 seconds; then sync and discard 3 more seconds. Warmup excluded from requested duration.','thresholds':p.get('thresholds',{}),'sync_call_elapsed_ms':(sync_end-sync_start)/1000,'latency_note':'Estimated frame timestamp to host dequeue latency after one-way time-sync; includes synchronization bias and long-run clock drift, not a precision bound.','drop_note':'V4L2 sequence gaps only; source gaps are diagnostics, not asserted end-to-end frame loss.'};self.save()
+            self.result['measurement_contract']={'streams':configuration,'duration_seconds':p['duration_seconds'],'warmup_seconds_minimum':p['warmup_seconds'],'warmup_rule':'Time-sync before stream start; both streams: 3 consecutive full 1-second windows within requested FPS ±20%, timeout 120 seconds; then 3-second start guard. Warmup excluded from requested duration.','thresholds':p.get('thresholds',{}),'sync_call_elapsed_ms':(sync_end-sync_start)/1000,'latency_note':'Estimated frame timestamp to host dequeue latency after one-way time-sync; includes synchronization bias and long-run clock drift, not a precision bound.','drop_note':'V4L2 sequence gaps only; source gaps are diagnostics, not asserted end-to-end frame loss.'};self.save()
             end=time.monotonic()+p['duration_seconds']+30
             while any(proc.poll() is None for _,proc,_,_ in processes):
                 if any(proc.poll() not in (None,0) for _,proc,_,_ in processes):raise RuntimeError('Capture stopped or stalled before requested duration')
@@ -147,6 +162,9 @@ class StreamCase(FactoryCase):
                     try:proc.wait(timeout=5)
                     except subprocess.TimeoutExpired:proc.kill();proc.wait()
                 log.close()
+            if capture_step is not None and processes:
+                capture_step.update(exit_code=processes[0][1].returncode,state='finished',completed_at=timestamp())
+                self.save()
             if self.result.get('outcome') in ('error','failed'):
                 partial={}
                 for kind,_,_,folder in processes:
