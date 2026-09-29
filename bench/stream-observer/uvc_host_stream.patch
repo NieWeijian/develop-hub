@@ -1,0 +1,41 @@
+--- upstream/uvc_host_stream.cpp
++++ hub/uvc_host_stream.cpp
+@@ -59,0 +60,2 @@
++#include "stream_metrics.hpp"
++
+@@ -69,5 +71,5 @@
+-constexpr int kRgbWidth = 640;
+-constexpr int kRgbHeight = 540;
+-constexpr int kDepthWidth = 640;
+-constexpr int kDepthHeight = 352;
+-constexpr int kTargetFps = 10;
++int kRgbWidth = 640;
++int kRgbHeight = 540;
++int kDepthWidth = 640;
++int kDepthHeight = 352;
++int kTargetFps = 10;
+@@ -223,0 +226 @@
++    hub_metrics::Observer observer(ctx.cfg.expected_type, ctx.capture.width(), ctx.capture.height(), ctx.cfg.format.fps);
+@@ -229,0 +233 @@
++        if (observer.tick()) break;
+@@ -246,0 +251 @@
++            observer.frame(buf, ctx.capture.buffer(buf.index));
+@@ -304,0 +310,5 @@
++        if (!hub_metrics::root.empty()) {
++            std::cerr << "Hub measurement requires exact requested resolution\n";
++            ctx.capture.close();
++            return false;
++        }
+@@ -338,0 +349,9 @@
++        if (a == "--metrics-root" && i+1<argc) {hub_metrics::root=argv[++i];continue;}
++        if (a == "--duration" && i+1<argc) {hub_metrics::duration=std::stoi(argv[++i]);continue;}
++        if (a == "--warmup" && i+1<argc) {hub_metrics::warmup=std::stoi(argv[++i]);continue;}
++        if (a == "--stall" && i+1<argc) {hub_metrics::stall=std::stoi(argv[++i]);continue;}
++        if (a == "--rgb-width" && i+1<argc) {kRgbWidth=std::stoi(argv[++i]);continue;}
++        if (a == "--rgb-height" && i+1<argc) {kRgbHeight=std::stoi(argv[++i]);continue;}
++        if (a == "--depth-width" && i+1<argc) {kDepthWidth=std::stoi(argv[++i]);continue;}
++        if (a == "--depth-height" && i+1<argc) {kDepthHeight=std::stoi(argv[++i]);continue;}
++        if (a == "--fps" && i+1<argc) {kTargetFps=std::stoi(argv[++i]);continue;}
+@@ -368 +387 @@
+-        if (!rgb_ctx.running.load() || !depth_ctx.running.load())
++        if (!rgb_ctx.running.load() && !depth_ctx.running.load())

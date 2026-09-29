@@ -1,0 +1,13 @@
+{
+  "version": "2026.09.29-hub-metrics1",
+  "upstream_package": "firmware-tools-20260929-cc3f234-hub1",
+  "upstream_commit": "cc3f2345245b3d8347d4ef604bb80b8a9e330546",
+  "owner": "Hub observer additions; firmware-owned capture loop",
+  "sha256": {
+    "upstream_source": "9129e3d67d4c728647341e945ce086bcc8a265902522623ef509795828170a2e",
+    "derived_source": "84e79eaf9c146f83795f840fa4b5c010fe358ded66f6e7ef0885bf6f48fa24f3",
+    "observer": "67843596e2f2a9847e5553b0d8dba321ef638c8e3017abc8c64279fc5021c4d8",
+    "patch": "f9b0b442fdfea844af4e9d0c2d5d29b7d4880d8e43d6b8fa8a18363e5274a32d",
+    "binary": "904fbab7a4189acc4fbed0817c557de929f9e3c9f1e1de0bf989d2ceeef84381"
+  }
+}

@@ -31,7 +31,7 @@ def definition(code):
     if code in json.loads((ROOT/'factory-codes.json').read_text()):
         data['support_sha256']={name:sha(ROOT/name) for name in ('factory_runtime.py','switch_runtime.py','frame_images.py','host-capture','rv1126b.py')}
     if code=='STREAM-RGB-DEPTH':
-        data['support_sha256'].update({name:sha(ROOT/name) for name in ('stream_quality.py','stream-quality-capture')})
+        data['support_sha256'].update({name:sha(ROOT/name) for name in ('stream_quality.py','uvc_host_stream-metrics')})
     return data
 
 

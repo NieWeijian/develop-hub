@@ -80,7 +80,7 @@ class StreamCase(FactoryCase):
             self.check('Tool SHA-256',self.data['tool_sha256'],digest(Path(self.data['tool'])),digest(Path(self.data['tool']))==self.data['tool_sha256'])
             package=self.data['tools_package'];needed=self.data['definition']['required_capabilities']
             if set(needed)-set(package['capabilities']):raise Blocked('Tools lack stream setup/time-sync capabilities')
-            helper=ROOT/'stream-quality-capture';expected=self.data['definition']['support_sha256']['stream-quality-capture']
+            helper=ROOT/'uvc_host_stream-metrics';expected=self.data['definition']['support_sha256']['uvc_host_stream-metrics']
             self.check('Capture helper SHA-256',expected,digest(helper),digest(helper)==expected)
             self.bind();mode=parse_params(self.call('original-mode','get-param'))['system']['usb_mode'];self.mode('rgb+depth')
             nodes={}
@@ -94,11 +94,12 @@ class StreamCase(FactoryCase):
                         if kind in nodes:raise RuntimeError('Ambiguous '+kind+' node')
                         nodes[kind]='/dev/'+node.name
             if set(nodes)!={'rgb','depth'}:raise Blocked('RGB and Depth nodes required at locked USB port')
-            for kind,typ,fmt in [('rgb',1,'NV12'),('depth',2,'YUYV')]:
-                folder=self.out/'artifacts'/kind;folder.mkdir()
-                log=(folder/'capture.log').open('wb')
-                proc=subprocess.Popen([str(helper),nodes[kind],str(p[kind+'_width']),str(p[kind+'_height']),fmt,str(p['fps']),str(typ),str(folder),str(p['duration_seconds']),str(p['stall_timeout_seconds']),str(p['warmup_seconds'])],stdout=log,stderr=log)
-                processes.append((kind,proc,log,folder))
+            log=(self.out/'artifacts/uvc_host_stream.log').open('wb')
+            args=[str(helper),'--device',nodes['rgb'],'--metrics-root',str(self.out/'artifacts'),'--duration',str(p['duration_seconds']),'--warmup',str(p['warmup_seconds']),'--stall',str(p['stall_timeout_seconds']),'--rgb-width',str(p['rgb_width']),'--rgb-height',str(p['rgb_height']),'--depth-width',str(p['depth_width']),'--depth-height',str(p['depth_height']),'--fps',str(p['fps'])]
+            proc=subprocess.Popen(args,stdout=log,stderr=log)
+            self.result['capture_tool']={'name':'uvc_host_stream + Hub metrics observer','command':args,'sha256':expected,'upstream_commit':package.get('upstream_commit'),'upstream_binary_sha256':package.get('files',{}).get('bin/uvc_host_stream')};self.save()
+            for kind in ('rgb','depth'):
+                processes.append((kind,proc,log,self.out/'artifacts'/kind))
             deadline=time.monotonic()+120
             while not all((folder/'ready').exists() for _,_,_,folder in processes):
                 if any(proc.poll() is not None for _,proc,_,_ in processes):raise RuntimeError('Stream configure/start failed; check capture logs and requested formats')
