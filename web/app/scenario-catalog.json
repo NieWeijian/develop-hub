@@ -10,13 +10,13 @@
       "name": "数据流质量",
       "cases": [
         {
-          "code": "STREAM-QUALITY",
-          "name": "多流质量（RGB / Depth / IR）",
-          "capability": "待适配",
-          "tool": "固件出流 tools",
-          "matrix": "USB3；常用开流组合；默认5小时，可指定时长；USB2另列特殊场景",
-          "source": "用户确认配置；格式和 IR 完整尺寸待 tools 枚举确认",
-          "assertion": "同一框架统计各流 FPS、丢帧、延时与抖动；按配置目标帧率分别判定。RGB 640×352@10 未编码；Depth 640×352@10，格式待核实；IR 2560×…档位。"
+          "code": "STREAM-RGB-DEPTH",
+          "name": "RGB + Depth 数据流质量",
+          "capability": "已接入 1.0.0",
+          "tool": "3588 取流 + firmware time-sync",
+          "matrix": "RGB 640x540 NV12@10 + Depth 640x352@10；默认 5 小时可配置；两路稳定预热后统一计时",
+          "assertion": "FPS、主机传输序号缺口、估算延时、间隔/延时抖动；性能阈值可选，原始记录可下载",
+          "source": "bench/stream_quality.py、stream_quality_capture.cpp"
         }
       ]
     },

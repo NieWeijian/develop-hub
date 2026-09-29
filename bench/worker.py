@@ -125,7 +125,7 @@ class Job:
             from switch_runtime import SPECS
             if code not in ('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP','SWITCH-ROTATE-CONTROL') and code not in SPECS and code not in json.loads((root/'info-codes.json').read_text()) and code not in json.loads((root/'factory-codes.json').read_text()): raise RuntimeError('Unregistered test adapter')
             for name,expected in adapter.get('support_sha256',{}).items():
-                if name not in ('factory_runtime.py','switch_runtime.py','telemetry_runtime.py','frame_images.py','host-capture','host-imu','rv1126b.py') or digest(root/name)!=expected:raise RuntimeError('Capture runtime hash mismatch')
+                if name not in ('stream_quality.py','stream-quality-capture','factory_runtime.py','switch_runtime.py','telemetry_runtime.py','frame_images.py','host-capture','host-imu','rv1126b.py') or digest(root/name)!=expected:raise RuntimeError('Capture runtime hash mismatch')
             entry=root/'test-cases'/code/'1.0.0/run.py'
             if digest(tool)!=adapter['tool_sha256'] or digest(root/'test_runtime.py')!=adapter['runtime_sha256'] or digest(entry)!=adapter['entrypoint_sha256'] or digest(entry.parent/'case.json')!=adapter['definition_sha256']:
                 raise RuntimeError('Test package version/hash mismatch')
@@ -147,7 +147,7 @@ class Job:
             atomic(out/'case-input.json',data)
             self.result['cases'][index]={'id':item['id'],'code':code,'name':item['name'],'state':'running'}
             self.save(message='Running '+code,current_case=code)
-            rc,_=self.run(['/usr/bin/python3',str(entry),'--input',str(out/'case-input.json'),'--output-dir',str(out)],code+'.log',900 if code in SPECS or code in json.loads((root/'factory-codes.json').read_text()) else 180 if code.startswith('INFO-') else 120)
+            rc,_=self.run(['/usr/bin/python3',str(entry),'--input',str(out/'case-input.json'),'--output-dir',str(out)],code+'.log',87300 if code=='STREAM-RGB-DEPTH' else 900 if code in SPECS or code in json.loads((root/'factory-codes.json').read_text()) else 180 if code.startswith('INFO-') else 120)
             result=json.loads((out/'result.json').read_text())
             passed=rc==0 and result.get('state')=='finished' and result.get('outcome')=='passed' and bool(result.get('assertions')) and all(a.get('passed') is True for a in result['assertions'])
             all_pass=all_pass and passed

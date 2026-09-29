@@ -12,7 +12,7 @@ from .db import SessionLocal
 
 from .basic_cases import ACTIVE_CODES, validate_parameters
 QUICK_CODES=tuple(code for code in json.loads((ROOT/'switch-codes.json').read_text())+json.loads((ROOT/'info-codes.json').read_text())+json.loads((ROOT/'factory-codes.json').read_text()) if code in ACTIVE_CODES)
-PACKAGE=['factory_runtime.py','factory-codes.json','worker.py','quick_tests.py','switch_runtime.py','telemetry_runtime.py','frame_images.py','test_runtime.py','rv1126b.py','host-capture','host-imu','info-codes.json','tools.lock.json']
+PACKAGE=['stream_quality.py','stream-quality-capture','factory_runtime.py','factory-codes.json','worker.py','quick_tests.py','switch_runtime.py','telemetry_runtime.py','frame_images.py','test_runtime.py','rv1126b.py','host-capture','host-imu','info-codes.json','tools.lock.json']
 
 async def create(payload,db,workflow):
     from .test_workbench_api import product_query, round_query, next_round_number, bench_devices

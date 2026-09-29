@@ -399,7 +399,7 @@ async def create_test_round(
             if adapter.get('missing_capabilities'):
                 raise HTTPException(422, 'Tool unsupported: '+', '.join(adapter['missing_capabilities']))
             parameters = payload.test_case_parameters.get(case.id, {})
-            if case.code.startswith('INFO-'):
+            if case.code.startswith('INFO-') or case.code=='STREAM-RGB-DEPTH':
                 from .basic_cases import validate_parameters
                 validate_parameters(case.code, parameters)
             if set(parameters) - set(adapter.get('parameters', {})):

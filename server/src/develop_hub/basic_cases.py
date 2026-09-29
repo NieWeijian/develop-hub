@@ -30,6 +30,8 @@ def definition(code):
         data['support_sha256']={name:sha(ROOT/name) for name in ('telemetry_runtime.py','switch_runtime.py','frame_images.py','host-capture','host-imu','rv1126b.py')}
     if code in json.loads((ROOT/'factory-codes.json').read_text()):
         data['support_sha256']={name:sha(ROOT/name) for name in ('factory_runtime.py','switch_runtime.py','frame_images.py','host-capture','rv1126b.py')}
+    if code=='STREAM-RGB-DEPTH':
+        data['support_sha256'].update({name:sha(ROOT/name) for name in ('stream_quality.py','stream-quality-capture')})
     return data
 
 
@@ -56,6 +58,12 @@ def validate_parameters(code, parameters):
     spec = definition(code).get('parameters', {})
     if set(parameters) - set(spec):
         raise HTTPException(422, 'Unsupported case parameters')
+    if code=='STREAM-RGB-DEPTH':
+        import sys
+        if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
+        from stream_quality import validate
+        try:validate(parameters)
+        except ValueError as exc:raise HTTPException(422,str(exc)) from exc
     if not code.startswith('INFO-'):
         return
     for key, value in parameters.items():

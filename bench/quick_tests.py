@@ -39,7 +39,7 @@ def execute(job,config):
         atomic(out/'case-input.json',data)
         job.result['cases'][index].update(state='running')
         job.save(current_case=code,message='Running '+code)
-        rc,_=job.run(['/usr/bin/python3',str(ROOT/'test-cases'/code/'1.0.0/run.py'),'--input',str(out/'case-input.json'),'--output-dir',str(out)],code+'.log',900)
+        rc,_=job.run(['/usr/bin/python3',str(ROOT/'test-cases'/code/'1.0.0/run.py'),'--input',str(out/'case-input.json'),'--output-dir',str(out)],code+'.log',87300 if code=='STREAM-RGB-DEPTH' else 900)
         result=json.loads((out/'result.json').read_text())
         assertions=result.get('assertions',[])
         passed=rc==0 and result.get('outcome')=='passed' and assertions and all(a['passed'] for a in assertions) and result.get('recovery',{}).get('state')=='passed'

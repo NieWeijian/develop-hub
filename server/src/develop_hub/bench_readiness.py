@@ -11,7 +11,7 @@ def artifact_patterns(board):
     return ['oem.img', 'system.img', 'boot.img'] if 'rv1126b' in board.lower() else ['update.img']
 
 def expected_package():
-    paths = {'factory_runtime.py','factory-codes.json','worker.py', 'rv1126b.py', 'test_runtime.py', 'tools.lock.json'}
+    paths = {'stream_quality.py','stream-quality-capture','factory_runtime.py','factory-codes.json','worker.py', 'rv1126b.py', 'test_runtime.py', 'tools.lock.json'}
     lock=json.loads((ROOT/'tools.lock.json').read_text())
     paths.update({lock['binary_path'],lock['manifest_path']})
     for code in CODES:

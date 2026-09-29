@@ -1,0 +1,62 @@
+{
+  "id": "STREAM-RGB-DEPTH",
+  "version": "1.0.0",
+  "name": "RGB + Depth 数据流质量",
+  "category": "basic",
+  "scenario": "stream_quality",
+  "risk_level": "state_change",
+  "entrypoint": "test-cases/STREAM-RGB-DEPTH/1.0.0/run.py",
+  "timeout_seconds": 87300,
+  "parameters": {
+    "duration_seconds": {
+      "type": "integer",
+      "default": 18000
+    },
+    "rgb_width": {
+      "type": "integer",
+      "default": 640
+    },
+    "rgb_height": {
+      "type": "integer",
+      "default": 540
+    },
+    "depth_width": {
+      "type": "integer",
+      "default": 640
+    },
+    "depth_height": {
+      "type": "integer",
+      "default": 352
+    },
+    "fps": {
+      "type": "integer",
+      "default": 10
+    },
+    "stall_timeout_seconds": {
+      "type": "integer",
+      "default": 5
+    },
+    "warmup_seconds": {
+      "type": "integer",
+      "default": 10
+    },
+    "thresholds": {
+      "type": "object",
+      "default": {}
+    }
+  },
+  "required_capabilities": [
+    "cli.get-param.v1",
+    "cli.set-device-mode.v1",
+    "cli.reboot.v1",
+    "cli.time-sync.v1"
+  ],
+  "assertions": [
+    "只开 RGB+Depth，RGB 640x540 NV12@10、Depth 640x352@10；时长默认 5 小时可指定",
+    "预热至少 10 秒，两流连续 3 个完整 1 秒窗口在目标 FPS ±20% 后开始正式计时，120 秒未稳定报错",
+    "统计 FPS、V4L2 序号缺口丢帧率、估算延时、到帧间隔/延时标准差；源帧跳号仅作诊断",
+    "性能阈值默认留空；仅按已指定阈值判断性能，基础检查完整运行及数据有效",
+    "结束关闭流、重启清除测试时钟同步偏移并恢复原模式"
+  ],
+  "revision": "2026-09-29-quality-warmup"
+}
