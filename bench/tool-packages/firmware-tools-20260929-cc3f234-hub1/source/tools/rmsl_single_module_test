@@ -1,0 +1,1623 @@
+#!/bin/bash
+# RK3588 host-side RMSL321 test tool (not shipped in module firmware).
+#
+# Dev/CI:  ./tools/rmsl_single_module_test package
+# Test host: ./rmsl_single_module_test help
+#            ./rmsl_single_module_test run [--quick|--long|--preview-only [SEC]]
+
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+BIN="$ROOT/bin"
+
+PACKAGE_BINS="uvc_host_ctl uvc_host_stream uvc_host_imu uvc_host_preview uvc_host_isp_test uvc_host_isp_cli uvc_host_ft uvc_host_ota"
+
+FIRMWARE_IMAGES="boot.img system.img oem.img"
+FIRMWARE_DIR="${RMSL_TEST_FIRMWARE_DIR:-$ROOT/firmware}"
+OTA_COUNT_FILE="${RMSL_TEST_OTA_COUNT_FILE:-$ROOT/.ota_counts}"
+
+usage() {
+    cat <<'EOF'
+RMSL321 structure-light module test tool (run on RK3588 test host)
+
+Usage:
+  ./rmsl_single_module_test help              Show this help (-h / --help)
+  ./rmsl_single_module_test run [options]     Run automated tests (recommended)
+  ./rmsl_single_module_test package           Build test tarball (developers only)
+
+Examples:
+  ./rmsl_single_module_test run               Quick test (same as --quick)
+  ./rmsl_single_module_test run --quick       Quick test: all functional items + short stability
+  ./rmsl_single_module_test run --long        Long test: fixed multi-round suite + 1 hour stability
+  ./rmsl_single_module_test run --long 2      Long test with 2 hour final stability
+  ./rmsl_single_module_test run --no-ota      Skip the DFU OTA test item
+  ./rmsl_single_module_test run --preview-only          Preview burn-in 1 hour
+  ./rmsl_single_module_test run --preview-only 28800    Preview burn-in 8 hours
+
+Run options:
+  --quick                 Few minutes: device/ctl/stream/FT/OTA + short stability
+                          (no switch rounds; enable with --switch-rounds/--mode-rounds)
+  --long [H]              Full suite: + algo switches + dual-mode stream rounds + ISP stress
+                          + final stability H hours (default 1)
+  --preview-only [SEC]    Preview burn-in: RGB+DEPTH preview + IMU + ctl monitor
+                          (default 3600s)
+  --switch-rounds N       Algo mode switch rounds (quick=0, long=500)
+  --mode-rounds N         Device mode rounds calib->rgb+ir->rgb+depth+ir->rgb+depth (quick=0, long=0)
+  --profile-rounds N      USB profile switch rounds high->medium->low->high (quick=1, long=100)
+  --fov-rounds N          FOV stop-stream/set/stream/readback rounds (quick=1, long=100)
+  --stream-sec N          Stream seconds for stream checks (default quick=20, long=60)
+  --isp-rounds N         ISP 3A stress rounds (quick=0, long=200)
+  --stability-sec N      Stability soak seconds (overrides quick minutes or long hours)
+  --stability-min N       Stability soak minutes in quick mode (default 1)
+  --device /dev/videoN    Pin the module under test (multi-module hubs)
+  --hidraw /dev/hidrawN   Pin the module's IMU HID node (with --device, use rmsl_multi_module_test)
+  --stream-only           Skip ISP stress
+  --isp-only              Skip stream monitor
+  --no-ctl                Skip control channel test
+  --no-stability          Skip the stability soak
+  --no-ft                 Skip factory test
+  --no-fov                Skip FOV set/stream/readback test
+  --no-switch             Skip algo + device mode switch tests
+  --no-ota                Skip DFU OTA test
+  --no-check              Skip UVC device check
+  --no-profile            Skip module USB profile switch check
+  --firmware-dir DIR      OTA firmware dir (default: tools/firmware)
+  -o DIR                  Session log directory (default: tools/logs/test_YYYYMMDD_HHMMSS)
+
+OTA note: the OTA item flashes BOTH A/B slots completely (oem/system/boot,
+boot last so U-Boot can verify it on the next reset)
+and leaves the module booting from slot A (production state).  Each slot is
+flashed at most 3 times (flash wear protection); counts are kept in
+tools/.ota_counts and the item is skipped once either slot reaches its limit.
+Packaging requires boot.img/system.img/oem.img in the firmware directory.
+
+USB profile note: the test switches high->medium->low and restores high each round,
+checks the module-side usb_profile value after each reboot, and leaves it high.
+
+Manual tools (in bin/ after extracting the package):
+  ./bin/uvc_host_preview          Live preview (Ctrl+C to stop)
+  ./bin/uvc_host_isp_cli          Interactive 3A / fps
+
+Pass / fail:
+  Last line RESULT: PASS = pass, FAIL = fail
+  Reports: written under tools/logs/test_YYYYMMDD_HHMMSS by default (use -o to override)
+EOF
+}
+
+check_firmware() {
+    local fw_dir="$1"
+    local missing=0 img
+    for img in $FIRMWARE_IMAGES; do
+        if [ ! -f "$fw_dir/$img" ]; then
+            echo "missing firmware: $fw_dir/$img" >&2
+            missing=1
+        fi
+    done
+    [ "$missing" -eq 0 ]
+}
+
+find_v4l2_node() {
+    local match="$1"
+    # RMSL32_* is a generic form: the module reports RMSL321_* normally and
+    # RMSL322_* when the sensor detection falls back, so try both.
+    case "$match" in
+        RMSL32_*)
+            if find_v4l2_node "RMSL321${match#RMSL32}"; then
+                return 0
+            fi
+            if find_v4l2_node "RMSL322${match#RMSL32}"; then
+                return 0
+            fi
+            return 1
+            ;;
+    esac
+    local name_path name node
+    for name_path in /sys/class/video4linux/video*/name; do
+        [ -f "$name_path" ] || continue
+        name="$(tr -d '\r\n' < "$name_path")"
+        case "$name" in
+            *"$match"*)
+                node="/dev/$(basename "$(dirname "$name_path")")"
+                if [ -r "$node" ] && [ -w "$node" ]; then
+                    printf '%s\n' "$node"
+                    return 0
+                fi
+                ;;
+        esac
+    done
+    return 1
+}
+
+
+module_usb_profile() {
+    $CTL_BIN get-usb-profile 2>/dev/null |
+        sed -n 's/^usb-profile:[[:space:]]*\([0-2]\).*/\1/p' |
+        tail -1
+}
+
+wait_module_usb_profile() {
+    local want="$1" timeout="${2:-60}" i=0 profile=""
+    while [ "$i" -lt "$timeout" ]; do
+        profile="$(module_usb_profile 2>/dev/null || true)"
+        if [ "$profile" = "$want" ]; then
+            printf '%s\n' "$profile"
+            return 0
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+    [ -n "$profile" ] && printf '%s\n' "$profile"
+    return 1
+}
+
+switch_module_usb_profile() {
+    local value="$1" want="$2" label="$3" profile_after="" rc=0
+    if ! wait_usb_profile_ready_before_switch "$label"; then
+        return 1
+    fi
+    set +e
+    $CTL_BIN set-usb-profile "$value" >> "$report_file" 2>&1
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        $CTL_BIN reboot >> "$report_file" 2>&1
+        rc=$?
+    fi
+    set -e
+    if [ "$rc" -ne 0 ]; then
+        log "USB profile check: ${label} FAIL (set/reboot failed)"
+        return 1
+    fi
+    log "USB profile check: ${label}, waiting for module reboot..."
+    if ! wait_control_ready 300; then
+        log "USB profile check: ${label} FAIL (control channel did not recover)"
+        return 1
+    fi
+    profile_after="$(wait_module_usb_profile "$want" 60 2>/dev/null || true)"
+    if [ "$profile_after" != "$want" ]; then
+        log "USB profile check: ${label} FAIL (usb_profile=${profile_after:-unknown}, want=${want})"
+        return 1
+    fi
+    log "USB profile check: ${label} OK (usb_profile=${want})"
+    save_device_log_snapshot "usb_profile_${label}_ok" 1
+    return 0
+}
+
+wait_usb_profile_ready_before_switch() {
+    local label="${1:-profile}"
+    log "USB profile check: ${label}, waiting ready before switch..."
+    if ! wait_control_ready 90; then
+        log "USB profile check: ${label} FAIL (control channel not stable before switch)"
+        return 1
+    fi
+    if ! wait_streams_ready 90; then
+        log "USB profile check: ${label} FAIL (streams not ready before switch)"
+        return 1
+    fi
+    if ! wait_stream_ok 120; then
+        log "USB profile check: ${label} FAIL (stream smoke not ready before switch)"
+        return 1
+    fi
+    sleep 3
+    log "USB profile check: ${label}, ready before switch"
+    return 0
+}
+
+wait_profile_stream_recovery() {
+    local want="${1:-2}" timeout="${2:-420}" i=0 profile=""
+    while [ "$i" -lt "$timeout" ]; do
+        if wait_control_ready 30; then
+            profile="$(wait_module_usb_profile "$want" 5 2>/dev/null || true)"
+            if [ "$profile" = "$want" ]; then
+                if wait_streams_ready 30 && wait_stream_ok 60; then
+                    return 0
+                fi
+                log "USB profile check: waiting streams after high (elapsed=${i}s)"
+            else
+                log "USB profile check: waiting usb_profile=${want} (current=${profile:-unknown}, elapsed=${i}s)"
+            fi
+        else
+            log "USB profile check: waiting control after high (elapsed=${i}s)"
+        fi
+        sleep 5
+        i=$((i + 5))
+    done
+    return 1
+}
+
+ensure_usb_profile_high_baseline() {
+    local cur=""
+    cur="$(module_usb_profile 2>/dev/null || true)"
+    if [ "$cur" = "2" ]; then
+        log "USB profile check: baseline already high (usb_profile=2)"
+        return 0
+    fi
+    log "USB profile check: baseline ${cur:-unknown} -> high"
+    switch_module_usb_profile high 2 baseline_high
+}
+
+usb_profile_rounds() {
+    local rounds="${1:-1}" r=1
+    if [ "$rounds" -le 0 ]; then
+        log_end "USB profile check: SKIP (0 rounds)"
+        return 0
+    fi
+    log_start "USB profile check: high -> medium -> low -> high (${rounds} round(s))"
+    if ! ensure_usb_profile_high_baseline; then
+        log_end "USB profile check: FAIL (baseline high failed)"
+        return 1
+    fi
+    while [ "$r" -le "$rounds" ]; do
+        log "  [usb profile round $r/$rounds] high -> medium"
+        if ! switch_module_usb_profile medium 1 "round_${r}_medium"; then
+            log_end "USB profile check: FAIL (round $r medium)"
+            return 1
+        fi
+        log "  [usb profile round $r/$rounds] medium -> low"
+        if ! switch_module_usb_profile low 0 "round_${r}_low"; then
+            log_end "USB profile check: FAIL (round $r low)"
+            return 1
+        fi
+        log "  [usb profile round $r/$rounds] low -> high"
+        if ! switch_module_usb_profile high 2 "round_${r}_high"; then
+            log_end "USB profile check: FAIL (round $r high)"
+            return 1
+        fi
+        r=$((r + 1))
+    done
+    if ! wait_profile_stream_recovery 2 420; then
+        log_end "USB profile check: FAIL (module did not recover streams)"
+        return 1
+    fi
+    log_end "USB profile check: PASS (${rounds} round(s), final usb_profile=2, streams recovered)"
+    return 0
+}
+
+SUPPORTED_MODES="640x352 512x448"
+
+# set-algo-mode now persists the target in the module ini and REBOOTS the
+# module (applies on next boot), so after sending it we must wait for the
+# control channel to come back with the target mode ready (status=2) and for
+# the UVC video nodes to re-appear. Returns 0 on success.
+wait_algo_ready() {
+    local want="$1" timeout="${2:-300}"
+    local out st mode i=0 j=0
+    while [ "$i" -lt "$timeout" ]; do
+        out="$($CTL_BIN get-algo-mode 2>/dev/null)"
+        st="$(printf '%s\n' "$out" | sed -n 's/.*status=\([0-9]*\).*/\1/p')"
+        mode="$(printf '%s\n' "$out" | sed -n 's/^\([0-9]*x[0-9]*\) .*/\1/p')"
+        if [ "$st" = "2" ] && [ "$mode" = "$want" ]; then
+            break
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+    if [ "$st" != "2" ] || [ "$mode" != "$want" ]; then
+        return 1
+    fi
+    # Video nodes are created after USB re-enumeration; the control channel can
+    # be up before /dev/video* appear. Check only the streams of the current
+    # device mode, not a fixed RGB+DEPTH+IR set.
+    local need_depth=no need_ir=no
+    case "$($CTL_BIN get-device-mode 2>/dev/null | tail -1)" in
+        rgb+depth|rgb+depth+ir) need_depth=yes ;;
+    esac
+    case "$($CTL_BIN get-device-mode 2>/dev/null | tail -1)" in
+        calib|rgb+ir|rgb+depth+ir) need_ir=yes ;;
+    esac
+    until [ "$j" -ge 30 ]; do
+        local nodes_ok=1
+        [ -n "$(find_v4l2_node RMSL32_RGB)" ] || nodes_ok=0
+        [ "$need_depth" = "no" ] || [ -n "$(find_v4l2_node RMSL32_DEPTH)" ] || nodes_ok=0
+        [ "$need_ir" = "no" ] || [ -n "$(find_v4l2_node RMSL32_IR)" ] || nodes_ok=0
+        [ "$nodes_ok" -eq 1 ] && break
+        sleep 1
+        j=$((j + 1))
+    done
+    [ "$j" -lt 30 ]
+}
+
+wait_control_ready() {
+    local timeout="${1:-60}" i=0
+    while [ "$i" -lt "$timeout" ]; do
+        $CTL_BIN ping 1 >/dev/null 2>&1 && return 0
+        sleep 1
+        i=$((i + 1))
+    done
+    return 1
+}
+
+wait_streams_ready() {
+    local timeout="${1:-60}" i=0 need_depth=no need_ir=no
+    case "$($CTL_BIN get-device-mode 2>/dev/null | tail -1)" in
+        rgb+depth|rgb+depth+ir) need_depth=yes ;;
+    esac
+    case "$($CTL_BIN get-device-mode 2>/dev/null | tail -1)" in
+        calib|rgb+ir|rgb+depth+ir) need_ir=yes ;;
+    esac
+    while [ "$i" -lt "$timeout" ]; do
+        [ -n "$(find_v4l2_node RMSL32_RGB)" ] || { sleep 1; i=$((i + 1)); continue; }
+        if [ "$need_depth" = "yes" ] &&
+           [ -z "$(find_v4l2_node RMSL32_DEPTH)" ]; then
+            sleep 1; i=$((i + 1)); continue
+        fi
+        if [ "$need_ir" = "yes" ] &&
+           [ -z "$(find_v4l2_node RMSL32_IR)" ]; then
+            sleep 1; i=$((i + 1)); continue
+        fi
+        return 0
+    done
+    return 1
+}
+
+# Brief uvc_host_stream run; rc=124 (timeout) means RGB+DEPTH both delivered
+# frames without failing.
+stream_smoke_ok() {
+    local secs="${1:-4}"
+    set +e
+    timeout "$secs" $STREAM_BIN >/dev/null 2>&1
+    local rc=$?
+    set -e
+    [ "$rc" -eq 124 ]
+}
+
+wait_stream_ok() {
+    local timeout="${1:-90}" i=0
+    while [ "$i" -lt "$timeout" ]; do
+        stream_smoke_ok 4 && return 0
+        sleep 5
+        i=$((i + 5))
+    done
+    return 1
+}
+
+wait_calib_mode() {
+    local want="$1" timeout="${2:-180}" i=0 out=""
+    while [ "$i" -lt "$timeout" ]; do
+        out="$($CTL_BIN get-device-mode 2>/dev/null | tail -1)"
+        [ "$out" = "$want" ] && return 0
+        sleep 1
+        i=$((i + 1))
+    done
+    return 1
+}
+
+ensure_device_mode() {
+    local want="$1" cur=""
+    cur="$($CTL_BIN get-device-mode 2>/dev/null | tail -1 || true)"
+
+    if [ "$cur" != "$want" ]; then
+        $CTL_BIN set-device-mode "$want" >/dev/null 2>&1 || return 1
+        wait_calib_mode "$want" 300 || return 1
+    fi
+
+    wait_control_ready 60 || return 1
+    wait_streams_ready 60 || return 1
+}
+
+# Verify every stream of the current device mode delivers frames.  The DEPTH
+# capture uses the algo size (640x352 / 512x448); IR uses full or binned combine frames.
+verify_mode() {
+    local algo="$1" dw dh rgb_node depth_node ir_node mode rw rh
+    local need_depth=no need_ir=no
+    case "$algo" in
+        640x352) dw=640; dh=352 ;;
+        512x448) dw=512; dh=448 ;;
+        *) return 1 ;;
+    esac
+    mode="$($CTL_BIN get-device-mode 2>/dev/null | tail -1)"
+    case "$mode" in
+        rgb+depth|rgb+depth+ir) need_depth=yes ;;
+    esac
+    case "$mode" in
+        calib|rgb+ir|rgb+depth+ir) need_ir=yes ;;
+    esac
+    case "$mode" in
+        calib) rw=1080; rh=1280 ;;
+        *)     rw=640; rh=540 ;;
+    esac
+    rgb_node="$(find_v4l2_node RMSL32_RGB)" || return 1
+    if [ "$need_depth" = "yes" ]; then
+        depth_node="$(find_v4l2_node RMSL32_DEPTH)" || return 1
+    fi
+    if [ "$need_ir" = "yes" ]; then
+        ir_node="$(find_v4l2_node RMSL32_IR)" || return 1
+    fi
+
+    local rgb_ok=1 depth_ok=1 ir_ok=1
+    timeout 25 v4l2-ctl --device "$rgb_node" \
+        --set-fmt-video=width=$rw,height=$rh,pixelformat=NV12 --set-parm=10 \
+        --stream-mmap --stream-count=10 --stream-to=/dev/null >/dev/null 2>&1 &
+    local rgb_pid=$! depth_pid="" ir_pid=""
+    if [ "$need_depth" = "yes" ]; then
+        timeout 25 v4l2-ctl --device "$depth_node" \
+            --set-fmt-video=width=$dw,height=$dh,pixelformat=YUYV --set-parm=10 \
+            --stream-mmap --stream-count=10 --stream-to=/dev/null >/dev/null 2>&1 &
+        depth_pid=$!
+    fi
+    if [ "$need_ir" = "yes" ]; then
+        timeout 25 v4l2-ctl --device "$ir_node" \
+            --set-fmt-video=width=1080,height=2560,pixelformat=NV12 \
+            --stream-mmap --stream-count=5 --stream-to=/dev/null >/dev/null 2>&1 &
+        ir_pid=$!
+    fi
+    wait $rgb_pid || rgb_ok=0
+    [ -n "$depth_pid" ] && { wait $depth_pid || depth_ok=0; }
+    [ -n "$ir_pid" ] && { wait $ir_pid || ir_ok=0; }
+    [ "$rgb_ok" -eq 1 ] &&
+        { [ "$need_depth" = "no" ] || [ "$depth_ok" -eq 1 ]; } &&
+        { [ "$need_ir" = "no" ] || [ "$ir_ok" -eq 1 ]; }
+}
+
+# ISP 3A stress (uvc_host_isp_test): RGB+IR outstream + 3A get/set rounds.
+run_isp_stress() {
+    local rounds="$1" logf="$2" summary=""
+    set +e
+    $ISP_BIN "$rounds" > "$logf" 2>&1
+    local rc=$?
+    set -e
+    summary="$(grep '^summary:' "$logf" | tail -1 || true)"
+    [ -n "$summary" ] && log "$summary"
+    [ "$rc" -eq 0 ] && printf '%s\n' "$summary" | grep -q '=> SUCCESS'
+}
+
+# Full control-channel surface: clean-log, --check, ping latency, param dump,
+# status snapshots, 32KB file round trip (exercises the 1024B data channel),
+# get-log, and restart-app recovery.
+ctl_test() {
+    local run_restart="${1:-0}" fail=0 out="" avg=""
+    $CTL_BIN clean-log >/dev/null 2>&1 || { log "ctl: clean-log FAIL"; fail=1; }
+    out="$($CTL_BIN --check 2>&1)" || { log "ctl: --check FAIL"; fail=1; }
+    printf '%s\n' "$out" | grep -q "CTL CHECK: PASS" || { log "ctl: --check not PASS"; fail=1; }
+    out="$($CTL_BIN get-version 2>&1)" || { log "ctl: get-version FAIL"; fail=1; }
+    [ -n "$out" ] || { log "ctl: get-version empty"; fail=1; }
+    out="$($CTL_BIN get-sn 2>&1)" || { log "ctl: get-sn FAIL"; fail=1; }
+    [ -n "$out" ] || { log "ctl: get-sn empty"; fail=1; }
+    out="$($CTL_BIN get-board-sn 2>&1)" || { log "ctl: get-board-sn FAIL"; fail=1; }
+    printf '%s\n' "$out" | grep -q '^upper=' || { log "ctl: upper board SN missing"; fail=1; }
+    printf '%s\n' "$out" | grep -q '^lower=' || { log "ctl: lower board SN missing"; fail=1; }
+    out="$($CTL_BIN ping 5 2>&1)" || { log "ctl: ping FAIL"; fail=1; }
+    avg="$(printf '%s\n' "$out" | sed -n 's/.*avg=\([0-9.]*\).*/\1/p')"
+    [ -n "$avg" ] && awk -v v="$avg" 'BEGIN{exit !(v+0 < 500)}' || {
+        log "ctl: ping latency high (avg=${avg:-?}ms)"; fail=1; }
+    log "ctl: ping 5x avg=${avg}ms"
+    out="$($CTL_BIN get-param 2>&1)" || { log "ctl: get-param FAIL"; fail=1; }
+    printf '%s\n' "$out" | grep -q '^\[system\]' || { log "ctl: get-param missing [system]"; fail=1; }
+    out="$($CTL_BIN get-pro-current 2>&1)" || { log "ctl: get-pro-current FAIL"; fail=1; }
+    printf '%s\n' "$out" | grep -q '^projector-current: [0-9][0-9]* mA$' || {
+        log "ctl: invalid projector current response: ${out:-empty}"; fail=1; }
+    out="$($CTL_BIN get-usb-profile 2>&1)" || { log "ctl: get-usb-profile FAIL"; fail=1; }
+    printf '%s\n' "$out" | grep -q '^usb-profile: [0-2] ' || {
+        log "ctl: invalid USB profile response: ${out:-empty}"; fail=1; }
+    out="$($CTL_BIN app-status 2>&1)" || { log "ctl: app-status FAIL"; fail=1; }
+    printf '%s\n' "$out" | grep -q "app: running" || { log "ctl: app not running"; fail=1; }
+    out="$($CTL_BIN sensor-status 2>&1)" || { log "ctl: sensor-status FAIL"; fail=1; }
+    printf '%s\n' "$out" | grep -q "count=3" || { log "ctl: sensor count != 3"; fail=1; }
+    out="$($CTL_BIN imu-status 2>&1)" || { log "ctl: imu-status FAIL"; fail=1; }
+    printf '%s\n' "$out" | grep -q "running" || { log "ctl: imu not running"; fail=1; }
+    out="$($CTL_BIN vicap-status 2>&1)" || { log "ctl: vicap-status FAIL"; fail=1; }
+    [ -n "$out" ] || { log "ctl: vicap-status empty"; fail=1; }
+    out="$($CTL_BIN isp-status 2>&1)" || { log "ctl: isp-status FAIL"; fail=1; }
+    [ -n "$out" ] || { log "ctl: isp-status empty"; fail=1; }
+    local src="/tmp/rmsl_ctl_rt_$$.bin" back="/tmp/rmsl_ctl_rt_back_$$.bin"
+    dd if=/dev/urandom of="$src" bs=1024 count=32 2>/dev/null || fail=1
+    if [ "$fail" -eq 0 ]; then
+        if $CTL_BIN file-put "$src" /tmp/rmsl_ctl_rt.bin >/dev/null 2>&1 &&
+           $CTL_BIN file-get /tmp/rmsl_ctl_rt.bin "$back" >/dev/null 2>&1 &&
+           cmp -s "$src" "$back"; then
+            log "ctl: file round-trip 32KB OK"
+        else
+            log "ctl: file round-trip FAIL"; fail=1
+        fi
+    fi
+    rm -f "$src" "$back" /tmp/rmsl_ctl_rt.bin
+    out="$($CTL_BIN get-log 2>&1)" || { log "ctl: get-log FAIL"; fail=1; }
+    [ -n "$out" ] || { log "ctl: get-log empty"; fail=1; }
+    if [ "$run_restart" -eq 1 ]; then
+        $CTL_BIN restart-app >/dev/null 2>&1 || fail=1
+        if wait_control_ready 120 && wait_streams_ready 60 && wait_stream_ok 120; then
+            log "ctl: restart-app fully recovered (streams OK)"
+            save_device_log_snapshot "ctl_restart_app_recovered" 1
+        else
+            log "ctl: restart-app did not fully recover"; fail=1
+        fi
+    else
+        log "ctl: restart-app SKIP (quick mode)"
+    fi
+    [ "$fail" -eq 0 ]
+}
+
+
+
+stop_host_streams() {
+    pkill -f "$STREAM_BIN" >/dev/null 2>&1 || true
+    pkill -f 'uvc_host_stream' >/dev/null 2>&1 || true
+    pkill -f 'v4l2-ctl.*--stream' >/dev/null 2>&1 || true
+    sleep 1
+}
+
+save_device_log_snapshot() {
+    local label="${1:-snapshot}" clear_after="${2:-0}"
+    local safe="" seq="" snap=""
+    if [ -z "${current_case_dir:-}" ] || [ "${preview_only:-0}" -ne 0 ] || [ ! -x "$BIN/uvc_host_ctl" ]; then
+        return 0
+    fi
+    mkdir -p "${current_case_device_dir:-$current_case_dir/device_logs}"
+    current_case_device_index=$(( ${current_case_device_index:-0} + 1 ))
+    safe="$(printf '%s' "$label" | tr -c 'A-Za-z0-9_.=-' '_')"
+    seq="$(printf '%03d' "$current_case_device_index")"
+    snap="${current_case_device_dir:-$current_case_dir/device_logs}/${seq}_${safe}.log"
+    {
+        printf '===== device log snapshot %s: %s (%s) =====\n' "$seq" "$label" "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)"
+        timeout 30 $CTL_BIN get-log 2>&1 || printf 'WARN: get device log failed\n'
+    } > "$snap"
+    if [ "$clear_after" -eq 1 ]; then
+        timeout 20 $CTL_BIN clean-log >> "${current_case_host:-/dev/null}" 2>&1 || \
+            printf 'WARN: clean device log failed after snapshot %s\n' "$seq" >> "${current_case_host:-/dev/null}"
+    fi
+}
+
+fov_switch_test() {
+    local rounds="${1:-1}" list_line="" orig="" fovs="" fov="" cur="" ok=1 r
+    orig="$($CTL_BIN get-fov 2>/dev/null | tail -1 || true)"
+    list_line="$($CTL_BIN get-fov-list 2>&1)" || {
+        log "fov: get-fov-list FAIL"
+        return 1
+    }
+    log "fov: $list_line"
+    fovs="$(printf '%s\n' "$list_line" | sed -n 's/^fov list ([0-9][0-9]*):[[:space:]]*//p')"
+    if [ -z "$fovs" ]; then
+        log "fov: empty fov list"
+        return 1
+    fi
+    if ! ensure_device_mode rgb+depth; then
+        log "fov: rgb+depth mode not ready"
+        return 1
+    fi
+    for r in $(seq 1 "$rounds"); do
+        log "  [fov round $r/$rounds] traversal start"
+        for fov in $fovs; do
+            log "  [fov round $r/$rounds] stop stream, set-fov $fov, stream verify, readback"
+            stop_host_streams
+            if ! $CTL_BIN set-fov "$fov" >> "${current_case_host:-/dev/null}" 2>&1; then
+                log "  FAIL: set-fov $fov failed"; ok=0; break
+            fi
+            if ! wait_control_ready 30 || ! wait_streams_ready 30; then
+                log "  FAIL: module not ready after set-fov $fov"; ok=0; break
+            fi
+            if ! wait_stream_ok 90; then
+                log "  FAIL: stream verify after set-fov $fov"; ok=0; break
+            fi
+            stop_host_streams
+            cur="$($CTL_BIN get-fov 2>/dev/null | tail -1 || true)"
+            if [ -z "$cur" ] || ! awk -v a="$cur" -v b="$fov" 'BEGIN{d=a-b; if (d<0) d=-d; exit !(d<=0.05)}'; then
+                log "  FAIL: fov readback mismatch, want=$fov got=${cur:-?}"; ok=0; break
+            fi
+            log "  [fov round $r/$rounds] readback OK ($cur)"
+            save_device_log_snapshot "fov_round_${r}_set_${fov}_stream_ok" 1
+        done
+        [ "$ok" -eq 1 ] || break
+    done
+    if [ -n "$orig" ] && [ "$ok" -eq 1 ]; then
+        log "  [fov] stop stream, restore original fov $orig, stream verify"
+        stop_host_streams
+        if $CTL_BIN set-fov "$orig" >> "${current_case_host:-/dev/null}" 2>&1 &&
+           wait_control_ready 30 && wait_streams_ready 30 && wait_stream_ok 90; then
+            stop_host_streams
+            cur="$($CTL_BIN get-fov 2>/dev/null | tail -1 || true)"
+            log "  [fov] restore readback ${cur:-?}"
+            save_device_log_snapshot "restore_fov_${orig}_stream_ok" 1
+        else
+            log "  WARN: restore original fov $orig not fully verified"
+        fi
+    fi
+    [ "$ok" -eq 1 ]
+}
+
+# Algo resolution switch rounds: base <-> alt, reboot each way + stream verify.
+algo_switch_rounds() {
+    local rounds="$1" base="$2" alt="$3" r sw_mode ok=1
+    for r in $(seq 1 "$rounds"); do
+        for sw_mode in "$alt" "$base"; do
+            log "  [algo round $r] set-algo-mode $sw_mode (reboots module)"
+            $CTL_BIN set-algo-mode "$sw_mode" >/dev/null 2>&1 || { ok=0; break; }
+            if ! wait_algo_ready "$sw_mode" 300; then
+                log "  FAIL: $sw_mode not ready after reboot"; ok=0; break
+            fi
+            log "  [algo round $r] $sw_mode ready, verifying streams"
+            if ! verify_mode "$sw_mode" >> "$switch_log" 2>&1; then
+                log "  FAIL: stream verify at $sw_mode"; ok=0; break
+            fi
+            save_device_log_snapshot "algo_round_${r}_${sw_mode}_ok" 1
+        done
+        [ "$ok" -eq 1 ] || break
+    done
+    if [ "$ok" -eq 1 ]; then
+        log_end "algo mode switch: PASS ($rounds round(s), $base <-> $alt)"
+    else
+        log_end "algo mode switch: FAIL ($rounds round(s), $base <-> $alt)"
+    fi
+    [ "$ok" -eq 1 ]
+}
+
+# Device mode switch rounds: calib raw -> rgb+ir -> rgb+depth+ir -> rgb+depth,
+# reboot each way and verify every stream in the selected mode.
+device_switch_rounds() {
+    local rounds="$1" r ok=1
+    for r in $(seq 1 "$rounds"); do
+        log "  [mode round $r] set-device-mode calib (reboots module)"
+        $CTL_BIN set-device-mode calib >/dev/null 2>&1 || { ok=0; break; }
+        if ! wait_calib_mode calib 300 || ! wait_control_ready 60 ||
+           ! wait_streams_ready 60; then
+            log "  FAIL: calib mode not ready after reboot"; ok=0; break
+        fi
+        log "  [mode round $r] calib mode ready, verifying streams"
+        verify_mode 640x352 >> "$switch_log" 2>&1 || {
+            log "  FAIL: stream verify calib"; ok=0; break; }
+        save_device_log_snapshot "device_mode_round_${r}_calib_ok" 1
+
+        log "  [mode round $r] set-device-mode rgb+ir (reboots module)"
+        $CTL_BIN set-device-mode rgb+ir >/dev/null 2>&1 || { ok=0; break; }
+        if ! wait_calib_mode rgb+ir 300 || ! wait_control_ready 60 ||
+           ! wait_streams_ready 60; then
+            log "  FAIL: device mode not ready after reboot"; ok=0; break
+        fi
+        log "  [mode round $r] device mode ready, verifying streams"
+        verify_mode 640x352 >> "$switch_log" 2>&1 || {
+            log "  FAIL: stream verify rgb+ir"; ok=0; break; }
+        save_device_log_snapshot "device_mode_round_${r}_rgb_ir_ok" 1
+
+        log "  [mode round $r] set-device-mode rgb+depth+ir (reboots module)"
+        $CTL_BIN set-device-mode rgb+depth+ir >/dev/null 2>&1 || { ok=0; break; }
+        if ! wait_calib_mode rgb+depth+ir 300 || ! wait_control_ready 60 ||
+           ! wait_streams_ready 60; then
+            log "  FAIL: three-stream mode not ready after reboot"; ok=0; break
+        fi
+        log "  [mode round $r] three-stream mode ready, verifying streams"
+        verify_mode 640x352 >> "$switch_log" 2>&1 || {
+            log "  FAIL: stream verify rgb+depth+ir"; ok=0; break; }
+        save_device_log_snapshot "device_mode_round_${r}_rgb_depth_ir_ok" 1
+
+        log "  [mode round $r] set-device-mode rgb+depth (reboots module)"
+        $CTL_BIN set-device-mode rgb+depth >/dev/null 2>&1 || { ok=0; break; }
+        if ! wait_calib_mode rgb+depth 300 || ! wait_control_ready 60 ||
+           ! wait_streams_ready 60; then
+            log "  FAIL: normal mode not ready after reboot"; ok=0; break
+        fi
+        log "  [mode round $r] normal mode ready, verifying streams"
+        verify_mode 640x352 >> "$switch_log" 2>&1 || {
+            log "  FAIL: stream verify normal"; ok=0; break; }
+        save_device_log_snapshot "device_mode_round_${r}_rgb_depth_ok" 1
+    done
+    if [ "$ok" -eq 1 ]; then
+        log_end "device mode switch: PASS ($rounds round(s), calib -> rgb+ir -> rgb+depth+ir -> rgb+depth)"
+    else
+        log_end "device mode switch: FAIL ($rounds round(s), calib -> rgb+ir -> rgb+depth+ir -> rgb+depth)"
+    fi
+    [ "$ok" -eq 1 ]
+}
+
+stream_mode_rounds() {
+    local rounds="$1" secs="$2" logf="$3" r ok=1
+    : > "$logf"
+    for r in $(seq 1 "$rounds"); do
+        local tmp="${logf%.log}_tmp_$$.log"
+        local rgb_fps="" depth_fps="" rgb_drops="" depth_drops="" stream_rc=0 fps_ok=1
+
+        log_start "stream mode round $r/$rounds: RGB+DEPTH ${secs}s"
+        echo "=== round $r/$rounds RGB+DEPTH $(ts) ===" >> "$logf"
+        if ! ensure_device_mode rgb+depth; then
+            ok=0; log_end "stream mode round $r: FAIL (RGB+DEPTH not ready)"; break
+        fi
+        if ! wait_stream_ok 120; then
+            ok=0; log_end "stream mode round $r: FAIL (RGB+DEPTH warmup stream not ready)"; break
+        fi
+        sleep 2
+        set +e
+        timeout "$secs" $STREAM_BIN > "$tmp" 2>&1
+        stream_rc=$?
+        set -e
+        cat "$tmp" >> "$logf"
+        rgb_drops="$(grep 'RMSL32_RGB' "$tmp" | grep 'fps=' | tail -1 | sed -n 's/.*drops_by_seq=\([0-9]*\).*/\1/p' || true)"
+        depth_drops="$(grep 'RMSL32_DEPTH' "$tmp" | grep 'fps=' | tail -1 | sed -n 's/.*drops_by_seq=\([0-9]*\).*/\1/p' || true)"
+        rgb_fps="$(grep 'RMSL32_RGB' "$tmp" | grep 'fps=' | tail -1 | sed -n 's/.*fps=\([0-9.]*\).*/\1/p' || true)"
+        depth_fps="$(grep 'RMSL32_DEPTH' "$tmp" | grep 'fps=' | tail -1 | sed -n 's/.*fps=\([0-9.]*\).*/\1/p' || true)"
+        rm -f "$tmp"
+        [ -n "$rgb_fps" ] && awk -v v="$rgb_fps" 'BEGIN{exit !(v+0>=8.0)}' || fps_ok=0
+        [ -n "$depth_fps" ] && awk -v v="$depth_fps" 'BEGIN{exit !(v+0>=8.0)}' || fps_ok=0
+        if [ "$stream_rc" -ne 124 ]; then
+            ok=0; log_end "stream mode round $r: FAIL (RGB+DEPTH rc=$stream_rc)"; break
+        elif [ "$fps_ok" -ne 1 ]; then
+            ok=0; log_end "stream mode round $r: FAIL (RGB+DEPTH fps rgb=${rgb_fps:-?} depth=${depth_fps:-?})"; break
+        elif [ -z "$rgb_drops" ] || [ -z "$depth_drops" ]; then
+            ok=0; log_end "stream mode round $r: FAIL (RGB+DEPTH drops missing)"; break
+        elif [ "$rgb_drops" -gt "$max_drops" ] || [ "$depth_drops" -gt "$max_drops" ]; then
+            ok=0; log_end "stream mode round $r: FAIL (RGB+DEPTH drops rgb=$rgb_drops depth=$depth_drops)"; break
+        fi
+        log_end "stream mode round $r/$rounds: RGB+DEPTH PASS (${secs}s, fps rgb=${rgb_fps:-?} depth=${depth_fps:-?}, drops rgb=${rgb_drops:-?} depth=${depth_drops:-?})"
+        save_device_log_snapshot "stream_round_${r}_rgb_depth_ok" 1
+
+        log_start "stream mode round $r/$rounds: RGB+IR ${secs}s"
+        echo "=== round $r/$rounds RGB+IR $(ts) ===" >> "$logf"
+        if ! ensure_device_mode rgb+ir; then
+            ok=0; log_end "stream mode round $r: FAIL (RGB+IR not ready)"; break
+        fi
+        local ir_rgb_node="" ir_ir_node="" rgb_rc=0 ir_rc=0
+        local rgb_tmp="${logf%.log}_rgbir_rgb_$$.log" ir_tmp="${logf%.log}_rgbir_ir_$$.log"
+        ir_rgb_node="$(find_v4l2_node RMSL32_RGB)" || true
+        ir_ir_node="$(find_v4l2_node RMSL32_IR)" || true
+        if [ -z "$ir_rgb_node" ] || [ -z "$ir_ir_node" ]; then
+            ok=0; log_end "stream mode round $r: FAIL (RGB+IR nodes missing)"; break
+        fi
+        timeout "$secs" v4l2-ctl --device "$ir_rgb_node" \
+            --set-fmt-video=width=640,height=540,pixelformat=NV12 --set-parm=10 \
+            --stream-mmap --stream-to=/dev/null > "$rgb_tmp" 2>&1 &
+        local rgb_pid=$!
+        timeout "$secs" v4l2-ctl --device "$ir_ir_node" \
+            --set-fmt-video=width=1080,height=2560,pixelformat=NV12 \
+            --stream-mmap --stream-to=/dev/null > "$ir_tmp" 2>&1 &
+        local ir_pid=$!
+        wait "$rgb_pid" || rgb_rc=$?
+        wait "$ir_pid" || ir_rc=$?
+        { echo "--- RGB ---"; cat "$rgb_tmp"; echo "--- IR ---"; cat "$ir_tmp"; } >> "$logf"
+        if [ "$rgb_rc" -ne 124 ] || [ "$ir_rc" -ne 124 ]; then
+            rm -f "$rgb_tmp" "$ir_tmp"
+            ok=0; log_end "stream mode round $r: FAIL (RGB+IR rc rgb=$rgb_rc ir=$ir_rc)"; break
+        elif grep -qiE 'no frames|error|failed|fail' "$rgb_tmp" "$ir_tmp"; then
+            rm -f "$rgb_tmp" "$ir_tmp"
+            ok=0; log_end "stream mode round $r: FAIL (RGB+IR stream error)"; break
+        fi
+        rm -f "$rgb_tmp" "$ir_tmp"
+        log_end "stream mode round $r/$rounds: RGB+IR PASS (${secs}s)"
+        save_device_log_snapshot "stream_round_${r}_rgb_ir_ok" 1
+    done
+
+    if [ "$ok" -eq 1 ]; then
+        log_end "stream mode rounds: PASS ($rounds round(s), RGB+DEPTH ${secs}s + RGB+IR ${secs}s)"
+    else
+        log_end "stream mode rounds: FAIL ($rounds round(s), RGB+DEPTH ${secs}s + RGB+IR ${secs}s)"
+    fi
+
+    ensure_device_mode rgb+depth >/dev/null 2>&1 || true
+    [ "$ok" -eq 1 ]
+}
+
+# Stability soak: RGB+DEPTH stream + IMU + periodic ctl ping for `secs`.
+run_stability() {
+    local secs="$1" st_log="$2" imu_logf="$3" mon_log="$4"
+    local st_pid imu_pid imu_timeout fail=0 cyc=0
+    timeout "$secs" $STREAM_BIN > "$st_log" 2>&1 &
+    st_pid=$!
+    imu_timeout=$((secs + 15))
+    timeout "$imu_timeout" $IMU_BIN "$secs" 5 > "$imu_logf" 2>&1 &
+    imu_pid=$!
+    sleep 3
+    local end=$(( $(date +%s) + secs ))
+    while [ "$(date +%s)" -lt "$end" ]; do
+        cyc=$((cyc + 1))
+        local ts rtt extra=""
+        ts="$(date '+%F %T')"
+        rtt="$(timeout 10 $CTL_BIN ping 1 2>/dev/null |
+            sed -n 's/.*avg=\([0-9.]*\).*/\1/p')"
+        if [ -z "$rtt" ]; then rtt=FAIL; fail=$((fail + 1)); fi
+        if ! kill -0 "$st_pid" 2>/dev/null; then extra="$extra stream_dead"; fail=$((fail + 1)); fi
+        if ! kill -0 "$imu_pid" 2>/dev/null; then extra="$extra imu_dead"; fail=$((fail + 1)); fi
+        if ! lsusb 2>/dev/null | grep -q "2207:001a"; then extra="$extra usb_gone"; fail=$((fail + 1)); fi
+        echo "$ts ping=${rtt}ms$extra" | tee -a "$mon_log"
+        sleep 50
+    done
+    wait "$st_pid" 2>/dev/null || true
+    wait "$imu_pid" 2>/dev/null || true
+    if [ ! -s "$imu_logf" ]; then
+        log "WARN: stability IMU log empty"
+        fail=$((fail + 1))
+    elif ! grep -q '^done:' "$imu_logf"; then
+        log "WARN: stability IMU log missing completion marker"
+        fail=$((fail + 1))
+    fi
+    local rgb_fps depth_fps rgb_drops depth_drops
+    rgb_fps="$(grep 'RMSL32_RGB' "$st_log" | grep 'fps=' | tail -1 |
+        sed -n 's/.*fps=\([0-9.]*\).*/\1/p')"
+    depth_fps="$(grep 'RMSL32_DEPTH' "$st_log" | grep 'fps=' | tail -1 |
+        sed -n 's/.*fps=\([0-9.]*\).*/\1/p')"
+    rgb_drops="$(grep 'RMSL32_RGB' "$st_log" | grep 'fps=' | tail -1 |
+        sed -n 's/.*drops_by_seq=\([0-9]*\).*/\1/p')"
+    depth_drops="$(grep 'RMSL32_DEPTH' "$st_log" | grep 'fps=' | tail -1 |
+        sed -n 's/.*drops_by_seq=\([0-9]*\).*/\1/p')"
+    log "stability summary: ${secs}s cycles=$cyc failures=$fail fps rgb=${rgb_fps:-?} depth=${depth_fps:-?} drops rgb=${rgb_drops:-?} depth=${depth_drops:-?}"
+    [ "$fail" -eq 0 ]
+}
+
+check_one() {
+    local label="$1"
+    local match="$2"
+    local node
+    if node="$(find_v4l2_node "$match")"; then
+        echo "OK:   $label -> $node"
+        return 0
+    fi
+    echo "MISS: $label ($match)"
+    return 1
+}
+
+check_devices() {
+    local missing=0
+    local mode=""
+    mode="$($CTL_BIN get-device-mode 2>/dev/null | tail -1)"
+    [ -n "$mode" ] || mode="rgb+depth"
+    echo "=== RMSL321 device check ==="
+    check_one RGB RMSL32_RGB || missing=1
+    case "$mode" in
+        rgb+depth|rgb+depth+ir) check_one DEPTH RMSL32_DEPTH || missing=1 ;;
+        *)        echo "SKIP: DEPTH (no-depth mode)" ;;
+    esac
+    case "$mode" in
+        calib|rgb+ir|rgb+depth+ir) check_one IR RMSL32_IR || missing=1 ;;
+        *)        echo "SKIP: IR (normal mode, no ir)" ;;
+    esac
+    [ "$missing" -eq 0 ] || return 1
+    echo "OK:   UVC streams for mode $mode are ready"
+}
+
+do_package() {
+    local build_dir="$ROOT/.rmsl_test_build"
+    local stage_root="$ROOT/.rmsl_test_staging"
+    local stage_dir="$stage_root/rmsl_test"
+    local dist_dir="$ROOT/dist"
+    local version arch_tag host_arch target_arch default_cross
+    local -a cmake_args
+
+    version="$(date +%Y%m%d)"
+    git -C "$ROOT/.." rev-parse --short HEAD >/dev/null 2>&1 &&
+        version="${version}-$(git -C "$ROOT/.." rev-parse --short HEAD)"
+
+    # OTA test tool requires flashing firmware; refuse to package without it.
+    if ! check_firmware "$FIRMWARE_DIR"; then
+        echo "ERROR: cannot package rmsl_test: OTA firmware (${FIRMWARE_IMAGES// /, }) " \
+             "not found in $FIRMWARE_DIR" >&2
+        echo "Put boot.img/system.img/oem.img under tools/firmware/ first." >&2
+        return 1
+    fi
+
+    target_arch="${RMSL_TEST_TARGET_ARCH:-aarch64}"
+    host_arch="$(uname -m)"
+    default_cross=""
+    case "$target_arch" in
+        aarch64) default_cross=aarch64-linux-gnu- ;;
+        arm|armv7l|armhf) default_cross=arm-linux-gnueabihf-; target_arch=armhf ;;
+    esac
+
+    if [ -z "${RMSL_TEST_CROSS:-}" ] && [ -n "$default_cross" ] &&
+       [ "$host_arch" != "$target_arch" ] && [ "$host_arch" != "aarch64" ]; then
+        if command -v "${default_cross}g++" >/dev/null 2>&1; then
+            RMSL_TEST_CROSS="$default_cross"
+        else
+            echo "ERROR: need ${target_arch} cross compiler (e.g. gcc-aarch64-linux-gnu)" >&2
+            exit 1
+        fi
+    fi
+
+    if [ -n "${RMSL_TEST_CROSS:-}" ]; then
+        arch_tag="${RMSL_TEST_CROSS%-}"
+    else
+        arch_tag="$host_arch"
+    fi
+
+    cmake_args=(-S "$ROOT" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release)
+    if [ -n "${RMSL_TEST_CROSS:-}" ]; then
+        cmake_args+=(
+            -DCMAKE_C_COMPILER="${RMSL_TEST_CROSS}gcc"
+            -DCMAKE_CXX_COMPILER="${RMSL_TEST_CROSS}g++"
+        )
+        [ -d /usr/lib/aarch64-linux-gnu/pkgconfig ] &&
+            export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+    fi
+    [ -n "${RMSL_TEST_TOOLCHAIN:-}" ] &&
+        cmake_args+=(-DCMAKE_TOOLCHAIN_FILE="$RMSL_TEST_TOOLCHAIN")
+
+    cmake "${cmake_args[@]}"
+    # shellcheck disable=SC2086
+    cmake --build "$build_dir" -j"$(nproc 2>/dev/null || echo 4)" --target $PACKAGE_BINS
+
+    rm -rf "$stage_root"
+    mkdir -p "$stage_dir/bin" "$stage_dir/firmware" "$dist_dir"
+    for exe in $PACKAGE_BINS; do
+        install -m 755 "$build_dir/$exe" "$stage_dir/bin/"
+    done
+    for img in $FIRMWARE_IMAGES; do
+        install -m 644 "$FIRMWARE_DIR/$img" "$stage_dir/firmware/"
+    done
+    install -m 755 "$ROOT/rmsl_single_module_test" "$ROOT/rmsl_multi_module_test" "$stage_dir/"
+    echo "$version" > "$stage_dir/VERSION"
+
+    local tarball="$dist_dir/rmsl_test_${arch_tag}_${version}.tar.gz"
+    tar -C "$stage_root" -czf "$tarball" rmsl_test
+    rm -rf "$build_dir" "$stage_root"
+
+    echo "Created: $tarball"
+    echo "Deploy:  tar xzf $(basename "$tarball") -C /opt && /opt/rmsl_test/rmsl_single_module_test help"
+}
+
+do_run() {
+    # Depth UVC on the module sustains ~1.2 fps loss (module sends ~9.3fps,
+    # host receives ~8.5fps; RGB is clean at 10fps).  max_drops=50 keeps the
+    # check meaningful (still fails on total loss or 2x degradation) without
+    # tripping on that baseline.
+    # quick targets a few minutes for dev iteration: no reboot-heavy switch
+    # rounds, a short stability window.  The multi-round algo/device switches
+    # belong to --long (or can be enabled explicitly with --switch-rounds /
+    # --mode-rounds / --stream-rounds).
+    local mode=quick stream_sec=20 stream_rounds=0 isp_rounds=0 max_drops=50 preview_sec=0
+    local switch_rounds=0 mode_rounds=0 profile_rounds=1 fov_rounds=1 stability_min=1 long_hours=1 stability_sec_override=
+    local report_dir="${RMSL_TEST_REPORT_DIR:-$ROOT/logs}" report_dir_set=0
+    local skip_stream=0 skip_isp=0 skip_check=0 skip_ft=0 skip_switch=0 skip_ota=0 skip_profile=0
+    local skip_ctl=0 skip_stability=0 skip_fov=0 preview_only=0
+    local device="" hidraw=""
+    local fw_dir="$FIRMWARE_DIR"
+    local stamp report_file stream_log isp_log preview_log ft_log switch_log ota_log
+    local ctl_log stab_mon_log stab_stream_log stab_imu_log imu_log preview_mon_log result=PASS
+    local stream_result=SKIP isp_result=SKIP preview_result=SKIP ft_result=SKIP switch_result=SKIP
+    local ota_result=SKIP ctl_result=SKIP profile_result=SKIP fov_result=SKIP stability_result=SKIP
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --quick) mode=quick; stream_sec=20; isp_rounds=0 ;;
+            --long)
+                mode=long; stream_sec=60; stream_rounds=500; isp_rounds=200
+                switch_rounds=500; mode_rounds=0; profile_rounds=100; fov_rounds=100; stability_min=0
+                if [ "${2:-}" != "" ] && [ "${2#-}" = "$2" ]; then
+                    long_hours="$2"
+                    shift
+                fi
+                ;;
+            --preview-only)
+                mode=preview
+                preview_only=1
+                skip_stream=1
+                skip_isp=1
+                skip_check=1
+                skip_ctl=1
+                skip_switch=1
+                skip_ft=1
+                skip_ota=1
+                skip_profile=1
+                skip_stability=1
+                if [ "${2:-}" != "" ] && [ "${2#-}" = "$2" ]; then
+                    preview_sec="$2"
+                    shift
+                else
+                    preview_sec=3600
+                fi
+                ;;
+            --switch-rounds) shift; switch_rounds="${1:?}" ;;
+            --mode-rounds) shift; mode_rounds="${1:?}" ;;
+            --profile-rounds) shift; profile_rounds="${1:?}" ;;
+            --fov-rounds) shift; fov_rounds="${1:?}" ;;
+            --stream-rounds) shift; stream_rounds="${1:?}" ;;
+            --stream-sec) shift; stream_sec="${1:?}" ;;
+            --isp-rounds) shift; isp_rounds="${1:?}" ;;
+            --stability-sec) shift; stability_sec_override="${1:?}" ;;
+            --stability-min) shift; stability_min="${1:?}" ;;
+            --device) shift; device="${1:?}" ;;
+            --hidraw) shift; hidraw="${1:?}" ;;
+            --stream-only) skip_isp=1 ;;
+            --isp-only) skip_stream=1 ;;
+            --no-ctl) skip_ctl=1 ;;
+            --no-stability) skip_stability=1 ;;
+            --no-check) skip_check=1 ;;
+            --no-ft) skip_ft=1 ;;
+            --no-fov) skip_fov=1 ;;
+            --no-switch) skip_switch=1 ;;
+            --no-ota) skip_ota=1 ;;
+            --no-profile) skip_profile=1 ;;
+            --firmware-dir) shift; fw_dir="${1:?}" ;;
+            -o) shift; report_dir="${1:?}"; report_dir_set=1 ;;
+            -h|--help) usage; return 0 ;;
+            *) echo "unknown option: $1" >&2; usage >&2; return 1 ;;
+        esac
+        shift
+    done
+
+    # Pin a specific module when --device/--hidraw are given; without them the
+    # tools keep their legacy auto-find (single module).
+    local CTL_BIN="$BIN/uvc_host_ctl${device:+ --device $device}"
+    local STREAM_BIN="$BIN/uvc_host_stream${device:+ --device $device}"
+    local FT_BIN="$BIN/uvc_host_ft${device:+ --device $device}"
+    local OTA_BIN="$BIN/uvc_host_ota${device:+ --device $device}"
+    local ISP_BIN="$BIN/uvc_host_isp_test${device:+ --device $device}"
+    local PREVIEW_BIN="$BIN/uvc_host_preview${device:+ --device $device}"
+    local IMU_BIN="$BIN/uvc_host_imu${hidraw:+ --hidraw $hidraw}"
+
+    if [ "$preview_only" -eq 1 ]; then
+        for exe in uvc_host_preview uvc_host_imu uvc_host_ctl; do
+            [ -x "$BIN/$exe" ] || { echo "missing $BIN/$exe (extract test package first)" >&2; return 1; }
+        done
+    else
+        for exe in uvc_host_ctl uvc_host_stream uvc_host_isp_test; do
+            [ -x "$BIN/$exe" ] || { echo "missing $BIN/$exe (extract test package first)" >&2; return 1; }
+        done
+    fi
+
+    stamp="$(date +%Y%m%d_%H%M%S)"
+    if [ "$report_dir_set" -eq 0 ]; then
+        report_dir="$report_dir/test_$stamp"
+    fi
+    mkdir -p "$report_dir"
+    local case_root="$report_dir/cases"
+    local current_case_dir="" current_case_host=""
+    mkdir -p "$case_root"
+    report_file="$report_dir/report_${stamp}.log"
+    stream_log="$report_dir/stream_${stamp}.log"
+    isp_log="$report_dir/isp_${stamp}.log"
+    ft_log="$report_dir/ft_${stamp}.log"
+    switch_log="$report_dir/switch_${stamp}.log"
+    ota_log="$report_dir/ota_${stamp}.log"
+    preview_log="$report_dir/preview_${stamp}.log"
+    ctl_log="$report_dir/ctl_${stamp}.log"
+    stab_mon_log="$report_dir/stability_monitor_${stamp}.log"
+    stab_stream_log="$report_dir/stability_stream_${stamp}.log"
+    stab_imu_log="$report_dir/stability_imu_${stamp}.log"
+    imu_log="$report_dir/imu_${stamp}.log"
+    preview_mon_log="$report_dir/preview_monitor_${stamp}.log"
+
+    log() {
+        printf '%s\n' "$*" | tee -a "$report_file"
+        if [ -n "${current_case_host:-}" ]; then
+            printf '%s\n' "$*" >> "$current_case_host"
+        fi
+    }
+
+    ts() { date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date; }
+    log_start() { log "[START $(ts)] $*"; }
+    log_end() { log "[END   $(ts)] $*"; }
+    case_begin() {
+        local name="$1" title="$2"
+        current_case_dir="$case_root/$name"
+        current_case_host="$current_case_dir/host.log"
+        current_case_device_dir="$current_case_dir/device_logs"
+        current_case_device_index=0
+        mkdir -p "$current_case_device_dir"
+        : > "$current_case_host"
+        printf '[CASE START %s] %s\n' "$(ts)" "$title" >> "$current_case_host"
+        if [ "$preview_only" -eq 0 ] && [ -x "$BIN/uvc_host_ctl" ]; then
+            timeout 20 $CTL_BIN clean-log >> "$current_case_host" 2>&1 || \
+                printf 'WARN: clean device log failed\n' >> "$current_case_host"
+        fi
+        log_start "$title"
+    }
+    case_finish() {
+        local text="$1"
+        log_end "$text"
+        save_device_log_snapshot "$text" 0
+        printf '[CASE END %s] %s\n' "$(ts)" "$text" >> "${current_case_host:-/dev/null}"
+        current_case_dir=""
+        current_case_host=""
+        current_case_device_dir=""
+        current_case_device_index=0
+    }
+
+    log "=== RMSL321 test session ==="
+    log "package: $(cat "$ROOT/VERSION" 2>/dev/null || echo unknown)"
+    log "report:  $report_file"
+    log "cases:   $case_root"
+    log_start "test session"
+
+    if [ "$skip_check" -eq 0 ]; then
+        case_begin "01_device_check" "device check (RGB / DEPTH / IR UVC)"
+        if check_devices >> "$current_case_host" 2>&1; then
+            cat "$current_case_host" >> "$report_file"
+            case_finish "device check: PASS"
+        else
+            cat "$current_case_host" >> "$report_file"
+            case_finish "device check: FAIL"
+            log_end "test session: FAIL"
+            log "RESULT: FAIL"
+            return 1
+        fi
+    else
+        log "device check: SKIP"
+    fi
+
+    # Device mode baseline: production state is rgb+depth. Run this BEFORE
+    # the profile switch / algo baseline so those always operate in normal
+    # rgb+depth mode (the profile recovery check streams RGB+DEPTH, which a
+    # RGB+IR-only modes cannot serve).
+    if [ "$preview_only" -eq 0 ] && [ -x "$BIN/uvc_host_ctl" ]; then
+        case_begin "02_device_baseline" "device mode baseline (rgb+depth)"
+        local cur_mode
+        cur_mode="$($CTL_BIN get-device-mode 2>/dev/null | tail -1)"
+        if [ -n "$cur_mode" ] && [ "$cur_mode" != "rgb+depth" ]; then
+            log "device mode baseline: $cur_mode -> rgb+depth"
+            if ! $CTL_BIN set-device-mode rgb+depth >> "$current_case_host" 2>&1; then
+                log "WARN: device mode baseline set-device-mode failed"
+            elif wait_calib_mode rgb+depth 300 && wait_control_ready 60 &&
+                 wait_streams_ready 60 && wait_stream_ok 90; then
+                log "device baseline: rgb+depth ready after module reboot"
+            else
+                log "WARN: rgb+depth baseline not ready"
+            fi
+        else
+            log "device mode baseline: ${cur_mode:-unknown} already rgb+depth"
+        fi
+        case_finish "device mode baseline: PASS"
+    fi
+
+    if [ "$preview_only" -eq 0 ] && [ "$skip_profile" -eq 0 ] &&
+       [ -x "$BIN/uvc_host_ctl" ]; then
+        if [ "$profile_rounds" -gt 0 ]; then
+            case_begin "03_usb_profile" "USB profile check: high -> medium -> low -> high (${profile_rounds} round(s))"
+            if usb_profile_rounds "$profile_rounds"; then
+                profile_result=PASS
+                case_finish "USB profile check: PASS"
+            else
+                profile_result=FAIL; result=FAIL
+                case_finish "USB profile check: FAIL"
+            fi
+        else
+            log "USB profile check: SKIP (0 rounds)"
+        fi
+    fi
+
+    # After a module reboot (e.g. the profile switch above), the USB
+    # device may re-appear before the UVC video nodes are created. Wait for
+    # the streams of the current device mode so the next phase does not fail
+    # with "device not found".
+    if [ "$preview_only" -eq 0 ] && [ "$skip_check" -eq 0 ]; then
+        if wait_streams_ready 30; then
+            log "UVC video nodes ready"
+        else
+            log "WARN: UVC video nodes not fully ready after 30s"
+        fi
+    fi
+    # The module may have just rebooted (USB2 profile switch); make sure the
+    # control channel is up before the baselines issue any command.
+    if [ "$preview_only" -eq 0 ] && [ -x "$BIN/uvc_host_ctl" ]; then
+        wait_control_ready 90 || log "WARN: control not ready after reboot"
+    fi
+
+    # Baseline: make sure the algorithm is on the common 640x352 mode before
+    # the stream/ISP/FT phases (those tools request DEPTH 640x352). A leftover
+    # 512x448 mode makes DEPTH frames get dropped (size mismatch). The switch
+    # persists the ini and reboots the module.
+    if [ "$preview_only" -eq 0 ] && [ -x "$BIN/uvc_host_ctl" ]; then
+        case_begin "04_algo_baseline" "algo mode baseline (640x352)"
+        local base_mode
+        base_mode="$($CTL_BIN get-algo-mode 2>/dev/null |
+            sed -n 's/^\([0-9]*x[0-9]*\) .*/\1/p')"
+        if [ "$base_mode" != "640x352" ]; then
+            log "algo mode baseline: $base_mode -> 640x352"
+            if ! $CTL_BIN set-algo-mode 640x352 >> "$current_case_host" 2>&1; then
+                log "WARN: algo baseline set-algo-mode failed"
+            elif wait_algo_ready 640x352 300 && wait_stream_ok 90; then
+                log "algo baseline: 640x352 ready after module reboot"
+            else
+                log "WARN: algo baseline switch to 640x352 not ready"
+            fi
+        else
+            log "algo mode baseline: already 640x352"
+        fi
+        case_finish "algo mode baseline: PASS"
+    fi
+
+    if [ "$preview_only" -eq 0 ] && [ "$skip_fov" -eq 0 ] && [ -x "$BIN/uvc_host_ctl" ]; then
+        if [ "$fov_rounds" -gt 0 ]; then
+            case_begin "05_fov_switch" "FOV stop-stream/set/stream/readback test (${fov_rounds} round(s))"
+            if fov_switch_test "$fov_rounds"; then
+                fov_result=PASS
+                case_finish "FOV test: PASS (${fov_rounds} round(s))"
+            else
+                fov_result=FAIL; result=FAIL
+                case_finish "FOV test: FAIL (${fov_rounds} round(s))"
+            fi
+        else
+            log "FOV test: SKIP (0 rounds)"
+        fi
+    else
+        log "FOV test: SKIP"
+    fi
+
+    if [ "$skip_ctl" -eq 0 ]; then
+        case_begin "06_ctl_channel" "ctl channel test (uvc_host_ctl full surface)"
+        ctl_log="$current_case_host"
+        local run_restart=0
+        [ "$mode" = "long" ] && run_restart=1
+        if ctl_test "$run_restart" >> "$ctl_log" 2>&1; then
+            ctl_result=PASS
+            case_finish "ctl channel test: PASS"
+        else
+            ctl_result=FAIL; result=FAIL
+            case_finish "ctl channel test: FAIL"
+        fi
+        log "ctl log: $ctl_log"
+    else
+        log "ctl channel test: SKIP"
+    fi
+
+    if [ "$skip_stream" -eq 0 ]; then
+        case_begin "07_stream_monitor" "stream monitor (RGB+DEPTH / IR check)"
+        stream_log="$current_case_host"
+        # Stream monitor has two modes:
+        #  - IR off: RGB+DEPTH frame-rate check (must be near nominal fps)
+        #  - IR on : all three streams must output frames (fps not enforced;
+        #            IR shares bandwidth and lowers RGB/DEPTH fps)
+        log_start "stream monitor IR-off (${stream_sec}s, uvc_host_stream)"
+        set +e
+        timeout "$stream_sec" $STREAM_BIN >> "$stream_log" 2>&1
+        local stream_rc=$?
+        set -e
+
+        local rgb_drops depth_drops rgb_fps depth_fps min_fps=8.0
+        rgb_drops="$(grep 'RMSL32_RGB' "$stream_log" | grep 'fps=' | tail -1 | sed -n 's/.*drops_by_seq=\([0-9]*\).*/\1/p')"
+        depth_drops="$(grep 'RMSL32_DEPTH' "$stream_log" | grep 'fps=' | tail -1 | sed -n 's/.*drops_by_seq=\([0-9]*\).*/\1/p')"
+        rgb_fps="$(grep 'RMSL32_RGB' "$stream_log" | grep 'fps=' | tail -1 | sed -n 's/.*fps=\([0-9.]*\).*/\1/p')"
+        depth_fps="$(grep 'RMSL32_DEPTH' "$stream_log" | grep 'fps=' | tail -1 | sed -n 's/.*fps=\([0-9.]*\).*/\1/p')"
+
+        local fps_ok=1
+        [ -n "$rgb_fps" ] && awk -v v="$rgb_fps" -v m="$min_fps" 'BEGIN{exit !(v+0>=m)}' || fps_ok=0
+        [ -n "$depth_fps" ] && awk -v v="$depth_fps" -v m="$min_fps" 'BEGIN{exit !(v+0>=m)}' || fps_ok=0
+
+        if [ "$stream_rc" -ne 0 ] && [ "$stream_rc" -ne 124 ]; then
+            stream_result=FAIL; result=FAIL
+            log_end "stream monitor IR-off: FAIL (exit rc=$stream_rc)"
+        elif grep -q 'no frames from driver' "$stream_log"; then
+            stream_result=FAIL; result=FAIL
+            log_end "stream monitor IR-off: FAIL (no frames)"
+        elif [ "$fps_ok" -ne 1 ]; then
+            stream_result=FAIL; result=FAIL
+            log_end "stream monitor IR-off: FAIL (fps rgb=${rgb_fps:-?} depth=${depth_fps:-?}, min $min_fps)"
+        elif [ -n "$rgb_drops" ] && [ -n "$depth_drops" ] &&
+             { [ "$rgb_drops" -gt "$max_drops" ] || [ "$depth_drops" -gt "$max_drops" ]; }; then
+            stream_result=FAIL; result=FAIL
+            log_end "stream monitor IR-off: FAIL (drops rgb=$rgb_drops depth=$depth_drops)"
+        else
+            stream_result=PASS
+            log_end "stream monitor IR-off: PASS (${stream_sec}s, fps rgb=${rgb_fps:-?} depth=${depth_fps:-?}, drops rgb=${rgb_drops:-?} depth=${depth_drops:-?})"
+        fi
+        log "stream log: $stream_log"
+
+        # IR-on: all three streams must deliver frames (fps not enforced).
+        log_start "stream monitor IR-on (RGB+DEPTH+IR output check)"
+        local ir_on_ok=1 ir_rgb_node ir_depth_node ir_ir_node
+        ir_rgb_node="$(find_v4l2_node RMSL32_RGB)" || ir_on_ok=0
+        ir_depth_node="$(find_v4l2_node RMSL32_DEPTH)" || ir_on_ok=0
+        ir_ir_node="$(find_v4l2_node RMSL32_IR)" || true
+        if [ -z "$ir_ir_node" ]; then
+            log_end "stream monitor IR-on: SKIP (IR not in current device mode)"
+        else
+        [ -n "$ir_rgb_node" ] && [ -n "$ir_depth_node" ] || ir_on_ok=0
+        timeout 25 v4l2-ctl --device "$ir_rgb_node" \
+            --set-fmt-video=width=640,height=540,pixelformat=NV12 --set-parm=10 \
+            --stream-mmap --stream-count=10 --stream-to=/dev/null >/dev/null 2>&1 &
+        local ir_rgb_pid=$!
+        timeout 25 v4l2-ctl --device "$ir_depth_node" \
+            --set-fmt-video=width=640,height=352,pixelformat=YUYV --set-parm=10 \
+            --stream-mmap --stream-count=10 --stream-to=/dev/null >/dev/null 2>&1 &
+        local ir_depth_pid=$!
+        timeout 25 v4l2-ctl --device "$ir_ir_node" \
+            --set-fmt-video=width=1080,height=2560,pixelformat=NV12 \
+            --stream-mmap --stream-count=5 --stream-to=/dev/null >/dev/null 2>&1 &
+        local ir_ir_pid=$!
+        wait $ir_rgb_pid || ir_on_ok=0
+        wait $ir_depth_pid || ir_on_ok=0
+        wait $ir_ir_pid || ir_on_ok=0
+        if [ "$ir_on_ok" -eq 1 ]; then
+            log_end "stream monitor IR-on: PASS (RGB/DEPTH/IR all delivered frames)"
+        else
+            stream_result=FAIL; result=FAIL
+            log_end "stream monitor IR-on: FAIL (one or more streams delivered no frames)"
+        fi
+        fi
+        if [ "$stream_result" = FAIL ]; then
+            case_finish "stream monitor: FAIL"
+        else
+            case_finish "stream monitor: PASS"
+        fi
+    else
+        log "stream monitor: SKIP"
+    fi
+
+    if [ "$skip_switch" -eq 0 ]; then
+        case_begin "08_algo_switch" "algo mode switch test"
+        switch_log="$current_case_host"
+        # Algo resolution switch rounds (640x352 <-> 512x448), each way
+        # reboots the module, then four-way device mode switch rounds. Both end on
+        # the production baseline (rgb+depth + 640x352).
+        local algo_sw=1 dev_sw=1
+        if [ "$switch_rounds" -gt 0 ]; then
+            log_start "algo mode switch ($switch_rounds round(s), 640x352 <-> 512x448)"
+            algo_switch_rounds "$switch_rounds" 640x352 512x448 || algo_sw=0
+        else
+            log "algo mode switch: SKIP (0 rounds)"
+        fi
+        if [ "$mode_rounds" -gt 0 ]; then
+            log_start "device mode switch ($mode_rounds round(s), four modes)"
+            device_switch_rounds "$mode_rounds" || dev_sw=0
+        else
+            log "device mode switch: SKIP (0 rounds)"
+        fi
+        # Final state must be the production baseline (rgb+depth + 640x352).
+        if [ "$algo_sw" -eq 1 ] && [ "$dev_sw" -eq 1 ]; then
+            switch_result=PASS
+        else
+            switch_result=FAIL; result=FAIL
+        fi
+        # Restore the production baseline regardless of the outcome so the
+        # following stream/ISP/FT/stability phases run at rgb+depth + 640x352.
+        local d a
+        d="$($CTL_BIN get-device-mode 2>/dev/null | tail -1)"
+        if [ "$d" != "rgb+depth" ]; then
+            log "restoring device mode rgb+depth"
+            $CTL_BIN set-device-mode rgb+depth >/dev/null 2>&1
+            wait_calib_mode rgb+depth 300 && wait_control_ready 60 ||
+                log "WARN: restore rgb+depth mode not ready"
+        fi
+        a="$($CTL_BIN get-algo-mode 2>/dev/null |
+            sed -n 's/^\([0-9]*x[0-9]*\) .*/\1/p')"
+        if [ "$a" != "640x352" ]; then
+            log "restoring algo mode 640x352"
+            $CTL_BIN set-algo-mode 640x352 >/dev/null 2>&1
+            wait_algo_ready 640x352 300 || log "WARN: restore 640x352 not ready"
+        fi
+        case_finish "switch tests: $switch_result (algo=$([ "$algo_sw" -eq 1 ] && echo PASS || echo FAIL) dev=$([ "$dev_sw" -eq 1 ] && echo PASS || echo FAIL))"
+        log "switch log: $switch_log"
+    else
+        log "switch tests: SKIP"
+    fi
+
+    if [ "$skip_stream" -eq 0 ] && [ "$stream_rounds" -gt 0 ]; then
+        case_begin "09_dual_mode_stream" "stream mode rounds ($stream_rounds round(s), RGB+DEPTH ${stream_sec}s + RGB+IR ${stream_sec}s)"
+        stream_log="$current_case_dir/stream_mode_rounds_host.log"
+        if stream_mode_rounds "$stream_rounds" "$stream_sec" "$stream_log"; then
+            stream_result=PASS
+            cat "$stream_log" >> "$current_case_host"
+            case_finish "stream mode rounds: PASS"
+        else
+            stream_result=FAIL; result=FAIL
+            cat "$stream_log" >> "$current_case_host" 2>/dev/null || true
+            case_finish "stream mode rounds: FAIL"
+        fi
+        log "stream mode rounds log: $stream_log"
+    fi
+
+    if [ "$skip_isp" -eq 0 ]; then
+        case_begin "10_isp_3a" "ISP 3A stress (rounds=$isp_rounds)"
+        isp_log="$current_case_host"
+        # Runs in both modes: normal (rgb+depth) uses the DEPTH node as the
+        # IR lane (the depth camera is the IR sensor pair, so 3A get/set is
+        # exercised the same way); RGB+IR-only modes use the IR UVC node.
+        log_start "ISP 3A stress (rounds=$isp_rounds, uvc_host_isp_test: RGB+IR outstream + 3A get/set)"
+        set +e
+        $ISP_BIN "$isp_rounds" >> "$isp_log" 2>&1
+        local isp_rc=$?
+        set -e
+        local summary
+        summary="$(grep '^summary:' "$isp_log" | tail -1 || true)"
+        [ -n "$summary" ] && log "$summary"
+        if [ "$isp_rc" -eq 0 ] && echo "$summary" | grep -q '=> SUCCESS'; then
+            isp_result=PASS
+            case_finish "ISP 3A stress: PASS"
+        else
+            isp_result=FAIL; result=FAIL
+            case_finish "ISP 3A stress: FAIL (rc=$isp_rc)"
+        fi
+        log "isp log: $isp_log"
+    else
+        log "ISP 3A stress: SKIP"
+    fi
+
+    if [ "$skip_ft" -eq 0 ]; then
+        case_begin "11_factory_test" "factory test (uvc_host_ft)"
+        ft_log="$current_case_host"
+        set +e
+        $FT_BIN --quick --json >> "$ft_log" 2>&1
+        local ft_rc=$?
+        set -e
+        if [ "$ft_rc" -eq 0 ] && grep -q '"overall":"PASS"' "$ft_log"; then
+            ft_result=PASS
+            case_finish "factory test: PASS"
+        else
+            ft_result=FAIL; result=FAIL
+            case_finish "factory test: FAIL (rc=$ft_rc)"
+        fi
+        log "ft log: $ft_log"
+    else
+        log "factory test: SKIP"
+    fi
+
+    if [ "$preview_only" -eq 0 ]; then
+        if [ "$skip_ota" -eq 0 ]; then
+            case_begin "12_ota" "OTA test (uvc_host_ota, full A/B: oem/system/boot on both slots)"
+            ota_log="$current_case_host"
+            if [ ! -x "$BIN/uvc_host_ota" ]; then
+                ota_result=FAIL; result=FAIL
+                log_end "OTA test: FAIL (missing $BIN/uvc_host_ota)"
+            elif ! check_firmware "$fw_dir"; then
+                ota_result=FAIL; result=FAIL
+                log_end "OTA test: FAIL (firmware missing in $fw_dir)"
+            else
+                # Full A/B OTA: every uvc_host_ota invocation flashes the
+                # non-running slot and boots into it, so two cycles flash both
+                # slots and leave the module booting the slot it started from.
+                # When started from B a third cycle brings it back to A, the
+                # production boot slot.  Per-slot flash counts guard against
+                # NAND wear (max 3 per slot).
+                local cur_slot="" cnt_cur=0 cnt_other=0 pass=0 ota_rc=0
+                cur_slot="$($OTA_BIN --verify-only --timeout 30 2>/dev/null |
+                    grep -oE '_([ab])"' | tail -1 | tr -d '_"')"
+                if [ -z "$cur_slot" ]; then
+                    ota_result=FAIL; result=FAIL
+                    log_end "OTA test: FAIL (cannot determine current boot slot)"
+                else
+                    cnt_cur="$(awk -v s="$cur_slot" '$1==s {print $2}' "$OTA_COUNT_FILE" 2>/dev/null || true)"
+                    [ -n "$cnt_cur" ] || cnt_cur=0
+                    local other_slot=a; [ "$cur_slot" = a ] && other_slot=b
+                    cnt_other="$(awk -v s="$other_slot" '$1==s {print $2}' "$OTA_COUNT_FILE" 2>/dev/null || true)"
+                    [ -n "$cnt_other" ] || cnt_other=0
+                    if [ "$cnt_cur" -ge 3 ] || [ "$cnt_other" -ge 3 ]; then
+                        ota_result=SKIP
+                        log_end "OTA test: SKIP (flash wear guard: $cur_slot=$cnt_cur/3 $other_slot=$cnt_other/3)"
+                    else
+                        local cycles=2
+                        [ "$cur_slot" != a ] && cycles=3
+                        set +e
+                        for pass in $(seq 1 "$cycles"); do
+                            timeout 420 $OTA_BIN --image-dir "$fw_dir" --timeout 180 \
+                                >> "$ota_log" 2>&1
+                            ota_rc=$?
+                            if [ "$ota_rc" -ne 0 ] || ! grep -q "RESULT: PASS" "$ota_log"; then
+                                ota_result=FAIL; result=FAIL
+                                log_end "OTA test: FAIL at cycle $pass/$cycles (rc=$ota_rc)"
+                                break
+                            fi
+                        done
+                        set -e
+                        if [ "$ota_result" != FAIL ]; then
+                            ota_result=PASS
+                        fi
+                        # Record what was actually flashed, even on failure
+                        # (NAND wear already happened).
+                        local flashed_a=0 flashed_b=0 final_slot=""
+                        flashed_a="$(grep -c "to slot _a" "$ota_log" 2>/dev/null || true)"
+                        flashed_b="$(grep -c "to slot _b" "$ota_log" 2>/dev/null || true)"
+                        [ -z "$flashed_a" ] && flashed_a=0
+                        [ -z "$flashed_b" ] && flashed_b=0
+                        local count_tmp="$OTA_COUNT_FILE.$$"
+                        if [ -f "$OTA_COUNT_FILE" ]; then
+                            awk -v fa="$flashed_a" -v fb="$flashed_b" '
+                                { if ($1 == "a" && fa) { $2 += fa; ha = 1 }
+                                  if ($1 == "b" && fb) { $2 += fb; hb = 1 }
+                                  print }
+                                END { if (fa && !ha) print "a", fa
+                                      if (fb && !hb) print "b", fb }
+                            ' "$OTA_COUNT_FILE" > "$count_tmp"
+                        else
+                            { [ "$flashed_a" -gt 0 ] && printf 'a %s\n' "$flashed_a"
+                              [ "$flashed_b" -gt 0 ] && printf 'b %s\n' "$flashed_b"; } > "$count_tmp"
+                        fi
+                        mv "$count_tmp" "$OTA_COUNT_FILE"
+                        if [ "$ota_result" = PASS ]; then
+                            final_slot="$($OTA_BIN --verify-only --timeout 60 2>/dev/null |
+                                grep -oE '_([ab])"' | tail -1 | tr -d '_"')"
+                            log_end "OTA test: PASS (flashed a=$flashed_a b=$flashed_b, final boot slot=${final_slot:-?})"
+                            if [ "$final_slot" != a ]; then
+                                log "OTA test: WARNING expected final boot slot a, got ${final_slot:-?}"
+                            fi
+                        fi
+                    fi
+                fi
+            fi
+            log "ota log: $ota_log"
+            case_finish "OTA test: $ota_result"
+        else
+            log "OTA test: SKIP"
+        fi
+    fi
+
+    if [ "$preview_only" -eq 0 ] && [ "$skip_stability" -eq 0 ]; then
+        # Stability soak: RGB+DEPTH stream + IMU + periodic ctl ping.
+        # quick: stability_min minutes; long: long_hours hours (default 1h).
+        local stability_sec=0
+        if [ -n "$stability_sec_override" ]; then
+            stability_sec="$stability_sec_override"
+        elif [ "$mode" = "long" ]; then
+            stability_sec=$(( long_hours * 3600 ))
+        else
+            stability_sec=$(( stability_min * 60 ))
+        fi
+        if [ "$stability_sec" -gt 0 ]; then
+            case_begin "13_stability" "stability test (${stability_sec}s)"
+            stab_mon_log="$current_case_host"
+            stab_stream_log="$current_case_dir/host_stream.log"
+            stab_imu_log="$current_case_dir/host_imu.log"
+            if run_stability "$stability_sec" "$stab_stream_log" "$stab_imu_log" "$stab_mon_log"; then
+                stability_result=PASS
+            else
+                stability_result=FAIL; result=FAIL
+            fi
+            case_finish "stability test: $stability_result (${stability_sec}s)"
+            log "stability monitor log: $stab_mon_log"
+            log "stability stream log: $stab_stream_log"
+            log "stability imu log: $stab_imu_log"
+        else
+            log "stability test: SKIP (0s)"
+        fi
+    else
+        log "stability test: SKIP"
+    fi
+
+    if [ "$preview_only" -eq 1 ]; then
+        # Standard application scenario: RGB+DEPTH preview + IMU stream +
+        # periodic control checks, for the burn-in duration.
+        case_begin "14_preview_burnin" "preview burn-in (${preview_sec}s: uvc_host_preview RGB+DEPTH + IMU + ctl monitor)"
+        preview_log="$current_case_host"
+        imu_log="$current_case_dir/host_imu.log"
+        preview_mon_log="$current_case_dir/host_monitor.log"
+        $IMU_BIN "$preview_sec" 5 > "$imu_log" 2>&1 &
+        local preview_imu_pid=$!
+        local preview_start="$(date +%s)"
+        (
+            while [ "$(date +%s)" -lt $(( preview_start + preview_sec )) ]; do
+                rtt="$(timeout 10 $CTL_BIN ping 1 2>/dev/null |
+                    sed -n 's/.*avg=\([0-9.]*\).*/\1/p')"
+                [ -n "$rtt" ] || rtt=FAIL
+                echo "$(date '+%F %T') ping=${rtt}ms" >> "$preview_mon_log"
+                sleep 50
+            done
+        ) &
+        local preview_mon_pid=$!
+        set +e
+        timeout "$preview_sec" $PREVIEW_BIN > "$preview_log" 2>&1
+        local preview_rc=$?
+        set -e
+        kill "$preview_imu_pid" 2>/dev/null
+        wait "$preview_imu_pid" 2>/dev/null || preview_rc=1
+        kill "$preview_mon_pid" 2>/dev/null
+        if [ "$preview_rc" -eq 124 ]; then
+            preview_result=PASS
+            case_finish "preview burn-in: PASS (${preview_sec}s elapsed)"
+        elif grep -q 'no frames from driver' "$preview_log"; then
+            preview_result=FAIL; result=FAIL
+            case_finish "preview burn-in: FAIL (no frames)"
+        elif [ "$preview_rc" -ne 0 ]; then
+            preview_result=FAIL; result=FAIL
+            case_finish "preview burn-in: FAIL (rc=$preview_rc)"
+        else
+            preview_result=PASS
+            case_finish "preview burn-in: PASS"
+        fi
+        log "preview log: $preview_log"
+        log "imu log: $imu_log"
+        log "monitor log: $preview_mon_log"
+    fi
+
+    if [ "$preview_only" -eq 1 ]; then
+        log "RESULT: $result (preview=$preview_result)"
+    else
+        log "RESULT: $result (ctl=$ctl_result profile=$profile_result fov=$fov_result stream=$stream_result switch=$switch_result isp=$isp_result ft=$ft_result ota=$ota_result stability=$stability_result)"
+    fi
+    log_end "test session: $result"
+    log "report: $report_file"
+    [ "$result" = PASS ]
+}
+
+case "${1:-}" in
+    ""|help|-h|--help)
+        usage
+        ;;
+    package)
+        shift
+        do_package "$@"
+        ;;
+    run)
+        shift
+        do_run "$@"
+        ;;
+    --*)
+        do_run "$@"
+        ;;
+    *)
+        echo "Unknown command: $1" >&2
+        echo "" >&2
+        usage >&2
+        exit 1
+        ;;
+esac

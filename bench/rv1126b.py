@@ -11,7 +11,7 @@ import subprocess
 import time
 
 ROOT = Path(__file__).resolve().parent
-CTL = ROOT / 'test-bins/ctl-trace-1/uvc_host_ctl'
+CTL = ROOT / json.loads((ROOT / 'tools.lock.json').read_text())['binary_path']
 BOARD = 'BoardConfig-SPI_NAND-RK805-RV1126B_EVB1_V10_V11-DualCamDis-v2.0-arm64.mk'
 PARTS = ('oem', 'system', 'boot')
 LEGACY_COUNTS = Path('/home/linaro/Desktop/DEV-structlight/tools/.ota_counts')

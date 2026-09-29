@@ -14,7 +14,12 @@ def definition(code):
     if code not in CODES: raise ValueError('Case adapter not available')
     folder=ROOT/'test-cases'/code/'1.0.0'
     data=json.loads((folder/'case.json').read_text())
-    data['tool_sha256']=sha(ROOT/'test-bins/ctl-trace-1/uvc_host_ctl')
+    lock=json.loads((ROOT/'tools.lock.json').read_text())
+    if sha(ROOT/lock['binary_path']) != lock['binary_sha256'] or sha(ROOT/lock['manifest_path']) != lock['manifest_sha256']:
+        raise ValueError('Frozen tool package checksum mismatch')
+    data['tools_package']=lock
+    data['missing_capabilities']=sorted(set(data.get('required_capabilities',[]))-set(lock.get('capabilities',[])))
+    data['tool_sha256']=lock['binary_sha256']
     data['runtime_sha256']=sha(ROOT/'test_runtime.py')
     data['entrypoint_sha256']=sha(folder/'run.py')
     data['definition_sha256']=sha(folder/'case.json')

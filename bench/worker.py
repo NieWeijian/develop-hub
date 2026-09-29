@@ -92,7 +92,9 @@ class Job:
 
     def run_tests(self, config, location):
         root=Path(__file__).resolve().parent
-        tool=root/'test-bins/ctl-trace-1/uvc_host_ctl'
+        tool_package=next((item.get('adapter',{}).get('tools_package') for item in config['test_cases'] if item.get('adapter',{}).get('tools_package')),None) or json.loads((root/'tools.lock.json').read_text())
+        tool=root/tool_package['binary_path']
+        if digest(tool)!=tool_package['binary_sha256']:raise RuntimeError('Frozen tool binary checksum mismatch')
         self.save('waiting_boot',message='Waiting for matching USB port and firmware version',flash_exit_code=0,usb_location=location)
         deadline=time.monotonic()+180;video=None;version=''
         while time.monotonic()<deadline:
@@ -130,7 +132,7 @@ class Job:
             for fixture in adapter.get('files',[]):
                 if digest(entry.parent/fixture['path'])!=fixture['sha256']: raise RuntimeError('Fixture hash mismatch')
             out=self.path/'cases'/code/'attempt-001';out.mkdir(parents=True,exist_ok=False)
-            data={'round_id':config['round_id'],'case_id':code,'definition':adapter,'tool':str(tool),'tool_sha256':adapter['tool_sha256'],'video':video,'usb_location':location,'commit':config['source']['commit'],'firmware_sha256':self.result['firmware_sha256'],'parameters':item.get('parameters',{})}
+            data={'tools_package':tool_package,'round_id':config['round_id'],'case_id':code,'definition':adapter,'tool':str(tool),'tool_sha256':adapter['tool_sha256'],'video':video,'usb_location':location,'commit':config['source']['commit'],'firmware_sha256':self.result['firmware_sha256'],'parameters':item.get('parameters',{})}
             if code in SPECS or code in json.loads((root/'info-codes.json').read_text()):
                 from rv1126b import discover
                 matching=[d for d in discover() if d['serial']==config['flash']['device_serial'] and self.usb_location(Path(d['usb_path']))==location]

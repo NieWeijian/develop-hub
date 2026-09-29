@@ -15,5 +15,8 @@
     "无 get-temperature 工具接口时阻塞，不判固件失败"
   ],
   "scope": "当前固件；短时上报检查与统计，保存原始数据及开流前后图片；不属于长稳测试",
-  "revision": "2026-09-29-information-contract"
+  "revision": "2026-09-29-information-contract",
+  "required_capabilities": [
+    "cli.get-temperature.v1"
+  ]
 }

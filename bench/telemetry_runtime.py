@@ -147,6 +147,12 @@ class InfoCase(Case):
                 return value
             tool = Path(self.data['tool'])
             self.check('Tool SHA-256', self.data['tool_sha256'], digest(tool), digest(tool) == self.data['tool_sha256'])
+            required_caps=self.data.get('definition',{}).get('required_capabilities',[])
+            available_caps=(self.data.get('tools_package') or {}).get('capabilities',[])
+            missing=sorted(set(required_caps)-set(available_caps))
+            if missing:
+                self.result.update(outcome='blocked',message='Tool package does not support: '+', '.join(missing))
+                return 1
             if self.code == 'INFO-PING':
                 limit = positive('max_rtt_ms', 50, 30000)
                 observations = {}
@@ -234,10 +240,10 @@ class InfoCase(Case):
                            bool(windows) and all(n > 0 and math.isfinite(rate) and rate > 0 for n, rate in windows))
                 self.record('imu', {'status': status, 'hidraw': hidraw, 'windows': windows, 'raw_output': output})
             elif self.code == 'INFO-TEMPERATURE':
-                # Read only CLI usage: do not touch the module when the command is absent.
-                help_result = subprocess.run([str(tool), '--help'], capture_output=True, text=True, timeout=10)
-                if 'get-temperature' not in help_result.stdout + help_result.stderr:
-                    self.result.update(outcome='blocked', message='Frozen firmware tool lacks get-temperature; update the tool package before testing')
+                # This CLI opens a module even for --help. Inspect the frozen manifest instead.
+                package = self.data.get('tools_package') or {}
+                if 'temperature.read.v1' not in package.get('capabilities', []):
+                    self.result.update(outcome='blocked', message='Frozen tool package does not declare temperature.read.v1; import a supported tool package')
                     return 1
                 capture = Capture(self, 'temperature-stream')
                 capture.snapshot()

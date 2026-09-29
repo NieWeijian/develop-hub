@@ -23,8 +23,10 @@ def execute(job,config):
         code=item['code']
         if code not in SPECS and code not in INFO_CODES:raise RuntimeError('Unregistered quick testcase')
         out=job.path/'cases'/code/'attempt-001';out.mkdir(parents=True,exist_ok=False)
-        tool=ROOT/'test-bins/ctl-trace-1/uvc_host_ctl'
-        data={'device':target,'tool':str(tool),'tool_sha256':digest(tool),'video':matching[0]['video'],'parameters':item.get('parameters',{})}
+        tool_package=item.get('adapter',{}).get('tools_package') or json.loads((ROOT/'tools.lock.json').read_text())
+        tool=ROOT/tool_package['binary_path']
+        if digest(tool)!=tool_package['binary_sha256']:raise RuntimeError('Frozen tool binary checksum mismatch')
+        data={'definition':item.get('adapter',{}),'tools_package':tool_package,'device':target,'tool':str(tool),'tool_sha256':digest(tool),'video':matching[0]['video'],'parameters':item.get('parameters',{})}
         if code in INFO_CODES:
             from rv1126b import locked_hidraw
             matches=[d for d in discover() if all(d[k]==target[k] for k in ('serial','usb_port','version'))]

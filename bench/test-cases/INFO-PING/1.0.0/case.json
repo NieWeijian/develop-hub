@@ -21,5 +21,8 @@
     "展示最小/平均/中位/最大 RTT 与每次读数"
   ],
   "scope": "当前固件；短时上报检查与统计，保存原始数据及开流前后图片；不属于长稳测试",
-  "revision": "2026-09-29-information-contract"
+  "revision": "2026-09-29-information-contract",
+  "required_capabilities": [
+    "cli.ping.v1"
+  ]
 }

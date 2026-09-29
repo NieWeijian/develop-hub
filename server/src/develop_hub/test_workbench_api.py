@@ -396,6 +396,8 @@ async def create_test_round(
             if case.code not in ACTIVE_CODES:
                 raise HTTPException(status_code=422, detail=f'用例尚未适配：{case.code}')
             adapter = definition(case.code)
+            if adapter.get('missing_capabilities'):
+                raise HTTPException(422, 'Tool unsupported: '+', '.join(adapter['missing_capabilities']))
             parameters = payload.test_case_parameters.get(case.id, {})
             if case.code.startswith('INFO-'):
                 from .basic_cases import validate_parameters

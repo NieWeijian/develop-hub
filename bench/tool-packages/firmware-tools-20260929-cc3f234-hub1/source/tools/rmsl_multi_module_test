@@ -1,0 +1,158 @@
+#!/bin/bash
+#
+# rmsl_multi_module_test - enumerate every connected RMSL321 module, run the
+# single-module suite on each, then verify all modules stream simultaneously.
+#
+# Usage:
+#   ./rmsl_multi_module_test [--list] [--quick|--long] [--single ARG...]
+#
+#   --list       only enumerate modules (port / serial / nodes), no testing
+#   --quick      run the quick suite on each module (default)
+#   --long       run the long suite on each module
+#   --single A.. pass extra arguments through to rmsl_single_module_test
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+SINGLE="$ROOT/rmsl_single_module_test"
+BIN="$ROOT/bin"
+
+node_is_capture() {
+    local caps
+    caps=$(v4l2-ctl --device "$1" --all 2>/dev/null |
+        grep -m1 "Device Caps" | sed 's/.*: *\(0x[0-9a-fA-F]*\).*/\1/')
+    [ -n "$caps" ] || return 1
+    [ $((caps & 0x1)) -ne 0 ] && [ $((caps & 0x04000000)) -ne 0 ]
+}
+
+# $1 = usb device sysfs dir; prints "rgb|depth|ir|hid"
+find_nodes() {
+    local usb="$1" rgb="" depth="" ir="" hid="" n name dev
+    for n in "$usb"/*/video4linux/video*; do
+        [ -f "$n/name" ] || continue
+        name=$(cat "$n/name")
+        dev="/dev/$(basename "$n")"
+        case "$name" in
+            *RMSL321_RGB*|*RMSL322_RGB*)
+                if [ -z "$rgb" ] && node_is_capture "$dev"; then rgb="$dev"; fi ;;
+            *RMSL321_DEPTH*|*RMSL322_DEPTH*)
+                if [ -z "$depth" ] && node_is_capture "$dev"; then depth="$dev"; fi ;;
+            *RMSL321_IR*|*RMSL322_IR*)
+                if [ -z "$ir" ] && node_is_capture "$dev"; then ir="$dev"; fi ;;
+        esac
+    done
+    local usb_real h h_real
+    usb_real=$(readlink -f "$usb")
+    for h in /sys/class/hidraw/hidraw*; do
+        h_real=$(readlink -f "$h" 2>/dev/null) || continue
+        case "$h_real" in
+            "$usb_real"*) hid="/dev/$(basename "$h")"; break ;;
+        esac
+    done
+    printf '%s|%s|%s|%s\n' "$rgb" "$depth" "$ir" "$hid"
+}
+
+# Prints one line per module: "port serial rgb depth ir hid".
+enumerate() {
+    local usb port serial nodes rgb depth ir hid
+    for usb in /sys/bus/usb/devices/*; do
+        [ -f "$usb/idVendor" ] || continue
+        [ "$(cat "$usb/idVendor" 2>/dev/null)" = "2207" ] || continue
+        port=$(basename "$usb")
+        serial=$(cat "$usb/serial" 2>/dev/null || true)
+        IFS='|' read -r rgb depth ir hid <<< "$(find_nodes "$usb")"
+        printf '%s %s %s %s %s %s\n' "$port" "$serial" "${rgb:--}" "${depth:--}" "${ir:--}" "${hid:--}"
+    done
+}
+
+usage() {
+    cat <<EOF
+RMSL321 multi-module test (USB hub with several modules)
+
+Usage:
+  ./rmsl_multi_module_test [--list] [--quick|--long] [--single ARG...]
+
+  --list       list every connected module (port/serial/nodes), no testing
+  --quick      run rmsl_single_module_test --quick on each module (default)
+  --long       run rmsl_single_module_test --long on each module
+  --single A.. pass remaining arguments to rmsl_single_module_test
+EOF
+}
+
+mode=run
+SINGLE_ARGS=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --list) mode=list; shift ;;
+        --quick) SINGLE_ARGS="--quick"; shift ;;
+        --long) SINGLE_ARGS="--long"; shift ;;
+        --single) shift; SINGLE_ARGS="$*"; break ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+[ -n "$SINGLE_ARGS" ] || SINGLE_ARGS="--quick"
+
+mapfile -t MODULES < <(enumerate)
+if [ "${#MODULES[@]}" -eq 0 ]; then
+    echo "no RMSL321 module found"
+    exit 1
+fi
+
+if [ "$mode" = list ]; then
+    printf '%-8s %-18s %-12s %-12s %-12s %s\n' "port" "serial" "rgb" "depth" "ir" "hid"
+    for line in "${MODULES[@]}"; do
+        read -r port serial rgb depth ir hid <<< "$line"
+        printf '%-8s %-18s %-12s %-12s %-12s %s\n' "$port" "$serial" "$rgb" "$depth" "$ir" "$hid"
+    done
+    exit 0
+fi
+
+echo "=== found ${#MODULES[@]} module(s); running single-module suites ==="
+declare -a RESULTS
+overall=PASS
+for line in "${MODULES[@]}"; do
+    read -r port serial rgb depth ir hid <<< "$line"
+    echo "==== module $serial ($port) rgb=$rgb hid=$hid"
+    if [ "$rgb" = "-" ] || [ "$hid" = "-" ]; then
+        echo "  SKIP: nodes not fully enumerated (rgb=$rgb hid=$hid)"
+        RESULTS+=("$serial SKIP")
+        continue
+    fi
+    if "$SINGLE" run $SINGLE_ARGS --device "$rgb" --hidraw "$hid"; then
+        RESULTS+=("$serial PASS")
+    else
+        RESULTS+=("$serial FAIL")
+        overall=FAIL
+    fi
+done
+
+echo "=== simultaneous stream check (all modules RGB+DEPTH) ==="
+sim_ok=PASS
+declare -a STREAMS
+stamp=$$
+for line in "${MODULES[@]}"; do
+    read -r port serial rgb depth ir hid <<< "$line"
+    [ "$rgb" = "-" ] && continue
+    timeout 15 "$BIN/uvc_host_stream" --device "$rgb" > "/tmp/rmsl_multi_${stamp}_${serial}.log" 2>&1 &
+    STREAMS+=("$serial $rgb /tmp/rmsl_multi_${stamp}_${serial}.log")
+done
+# Let every stream run its full window: uvc_host_stream prints a stats line
+# every 5 s and only flushes it on normal exit, so inspect the logs only
+# after the background jobs have finished.
+wait || true
+for s in "${STREAMS[@]}"; do
+    read -r serial rgb log <<< "$s"
+    if grep -q "5s:" "$log" 2>/dev/null; then
+        echo "  $serial: streams OK"
+    else
+        echo "  $serial: FAIL (no frames)"
+        sim_ok=FAIL
+        overall=FAIL
+    fi
+done
+
+echo "=== summary ==="
+for r in "${RESULTS[@]}"; do echo "  $r"; done
+echo "  simultaneous: $sim_ok"
+echo "RESULT: $overall"
+[ "$overall" = PASS ]

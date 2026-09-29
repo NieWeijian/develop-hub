@@ -12,7 +12,7 @@ from .db import SessionLocal
 
 from .basic_cases import ACTIVE_CODES, validate_parameters
 QUICK_CODES=tuple(code for code in json.loads((ROOT/'switch-codes.json').read_text())+json.loads((ROOT/'info-codes.json').read_text()) if code in ACTIVE_CODES)
-PACKAGE=['worker.py','quick_tests.py','switch_runtime.py','telemetry_runtime.py','frame_images.py','test_runtime.py','rv1126b.py','host-capture','host-imu','info-codes.json','test-bins/ctl-trace-1/uvc_host_ctl']
+PACKAGE=['worker.py','quick_tests.py','switch_runtime.py','telemetry_runtime.py','frame_images.py','test_runtime.py','rv1126b.py','host-capture','host-imu','info-codes.json','tools.lock.json']
 
 async def create(payload,db,workflow):
     from .test_workbench_api import product_query, round_query, next_round_number, bench_devices
@@ -27,6 +27,7 @@ async def create(payload,db,workflow):
         case=db.get(TestCase,cid)
         if not case or not case.enabled or case.code not in QUICK_CODES:raise HTTPException(422,'Developer mode supports switching and information cases')
         adapter=definition(case.code)
+        if adapter.get('missing_capabilities'):raise HTTPException(422,'Tool unsupported: '+', '.join(adapter['missing_capabilities']))
         parameters=payload.test_case_parameters.get(cid, {})
         validate_parameters(case.code, parameters)
         cases.append(dict(id=cid,code=case.code,name=case.name,category=case.category,adapter=adapter,parameters=parameters))
@@ -49,8 +50,14 @@ async def dispatch(workflow,rid):
     try:
         with SessionLocal() as db:
             row=db.get(TestRound,rid);bench=TestBench(**row.bench_snapshot)
-            files=PACKAGE+['test-cases/'+c['code']+'/1.0.0/'+name for c in row.test_case_snapshot for name in ('run.py','case.json')]
+            for c in row.test_case_snapshot:
+                frozen=c['adapter']['tools_package']
+                if sha(ROOT/frozen['binary_path'])!=frozen['binary_sha256'] or sha(ROOT/frozen['manifest_path'])!=frozen['manifest_sha256']:
+                    raise RuntimeError('Frozen tools package changed since round creation')
+            tool_files=sorted({path for c in row.test_case_snapshot for path in (c['adapter']['tools_package']['binary_path'], c['adapter']['tools_package']['manifest_path'])})
+            files=PACKAGE+tool_files+['test-cases/'+c['code']+'/1.0.0/'+name for c in row.test_case_snapshot for name in ('run.py','case.json')]
             config={'schema_version':2,'round_id':f'TEST-{row.display_number:06d}','execution_boundary':'current_firmware','execute_test_cases':True,
+                    'tools_package':row.test_case_snapshot[0]['adapter']['tools_package'],
                     'device':row.product_snapshot['device'],'test_cases':row.test_case_snapshot,'package_sha256':{name:sha(ROOT/name) for name in files}}
             data=json.dumps(config,ensure_ascii=False,indent=2).encode();checksum=hashlib.sha256(data).hexdigest()
             remote=bench.remote_root+'/jobs/'+config['round_id']

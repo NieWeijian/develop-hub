@@ -25,5 +25,11 @@
     "三个 rkisp 节点齐全，帧计数前进，ErrCnt/frameloss 增量为 0"
   ],
   "scope": "当前固件；短时上报检查与统计，保存原始数据及开流前后图片；不属于长稳测试",
-  "revision": "2026-09-29-information-contract"
+  "revision": "2026-09-29-information-contract",
+  "required_capabilities": [
+    "cli.sensor-status.v1",
+    "cli.vicap-status.v1",
+    "cli.isp-status.v1",
+    "cli.get-param.v1"
+  ]
 }

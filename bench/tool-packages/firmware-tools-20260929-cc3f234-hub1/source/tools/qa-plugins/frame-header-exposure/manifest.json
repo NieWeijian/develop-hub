@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "plugin_id": "frame-header-exposure",
+  "version": "1.0.0",
+  "name": "Frame Header Exposure Check",
+  "summary": "Capture paired RGB and DEPTH streams and verify that UVC frame-header V2 exposes non-zero exposure time.",
+  "cases": [{
+    "code": "QA-FRAME-HEADER-EXPOSURE",
+    "name": "Parse exposure from frame header V2",
+    "description": "Precondition: one RMSL module is connected in rgb+depth mode with auto exposure running. Capture RGB NV12 and DEPTH YUYV together; pass when each stream contains at least 30 consecutive valid V2 headers with non-zero exposure_us.",
+    "entrypoint": "bin/check-frame-header-exposure.sh",
+    "args": [],
+    "expected_exit_code": 0,
+    "timeout_seconds": 90,
+    "risk_level": "state_change",
+    "sudo": false
+  }]
+}

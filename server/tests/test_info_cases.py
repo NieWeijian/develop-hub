@@ -25,7 +25,7 @@ def factory(tmp_path, monkeypatch):
     monkeypatch.setattr(rt, 'Capture', Capture)
     tool = tmp_path / 'tool'; tool.write_bytes(b'fake')
     def create(code, answer, parameters=None):
-        case = rt.InfoCase(code, {'tool': str(tool), 'tool_sha256': rt.digest(tool), 'parameters': parameters or {}}, tmp_path / code)
+        case = rt.InfoCase(code, {'tools_package': {'capabilities': ['temperature.read.v1']}, 'tool': str(tool), 'tool_sha256': rt.digest(tool), 'parameters': parameters or {}}, tmp_path / code)
         (case.out / 'protocol.jsonl').write_text('trace\n')
         case.call = answer
         return case
@@ -102,7 +102,7 @@ def test_temperature_all_channels_30_seconds_and_summary(factory):
 
 def test_temperature_missing_tool_is_blocked_before_capture(factory, monkeypatch):
     case = factory('INFO-TEMPERATURE', lambda *a: pytest.fail('Must not call module'))
-    monkeypatch.setattr(rt.subprocess, 'run', lambda *a, **k: SimpleNamespace(stdout='old tool', stderr=''))
+    case.data['tools_package'] = {'capabilities': []}
     monkeypatch.setattr(rt, 'Capture', lambda *a: pytest.fail('Must not open stream'))
     assert case.run() == 1
     assert case.result['outcome'] == 'blocked'

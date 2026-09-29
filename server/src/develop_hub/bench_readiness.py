@@ -11,7 +11,9 @@ def artifact_patterns(board):
     return ['oem.img', 'system.img', 'boot.img'] if 'rv1126b' in board.lower() else ['update.img']
 
 def expected_package():
-    paths = {'worker.py', 'rv1126b.py', 'test_runtime.py', 'test-bins/ctl-trace-1/uvc_host_ctl'}
+    paths = {'worker.py', 'rv1126b.py', 'test_runtime.py', 'tools.lock.json'}
+    lock=json.loads((ROOT/'tools.lock.json').read_text())
+    paths.update({lock['binary_path'],lock['manifest_path']})
     for code in CODES:
         folder = f'test-cases/{code}/1.0.0'
         paths.update({folder+'/run.py', folder+'/case.json'})
