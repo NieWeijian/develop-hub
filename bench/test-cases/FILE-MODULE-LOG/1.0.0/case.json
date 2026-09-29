@@ -1,0 +1,21 @@
+{
+  "id": "FILE-MODULE-LOG",
+  "version": "1.0.0",
+  "name": "模组当前日志拉取",
+  "category": "basic",
+  "scenario": "storage",
+  "risk_level": "read_only",
+  "entrypoint": "test-cases/FILE-MODULE-LOG/1.0.0/run.py",
+  "timeout_seconds": 900,
+  "parameters": {},
+  "assertions": [
+    "获取日志尾部及 lasted.log，完整文件非空",
+    "超过 60000 字节时阻塞，要求固件工具提供分段下载"
+  ],
+  "required_capabilities": [
+    "cli.get-log.v1",
+    "cli.file-list.v1",
+    "cli.file-get.v1"
+  ],
+  "revision": "2026-09-29-factory-storage"
+}

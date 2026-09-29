@@ -15,7 +15,7 @@ def artifact(folder, code, name):
     attempt=folder/'cases'/code/'attempt-001'
     result=json.loads((attempt/'result.json').read_text())
     item=next((f for f in result.get('files',[]) if f['path']==name),None)
-    if not item or item.get('role') not in ('image','raw_frame','frame_metadata'):raise ValueError('Undeclared artifact')
+    if not item or item.get('role') not in ('image','raw_frame','frame_metadata','input','output','measurement'):raise ValueError('Undeclared artifact')
     path=(attempt/name).resolve()
     if attempt.resolve() not in path.parents or path.is_symlink():raise ValueError('Invalid artifact location')
     if path.stat().st_size!=item['size_bytes'] or path.stat().st_size>32*1024*1024:raise ValueError('Artifact size mismatch')
@@ -34,5 +34,5 @@ async def archive(workflow,bench,remote,number):
         for report in (folder/'cases').glob('*/attempt-001/result.json'):
             result=json.loads(report.read_text())
             for item in result.get('files',[]):
-                if item.get('role') in ('image','raw_frame','frame_metadata'):artifact(folder,report.parent.parent.name,item['path'])
+                if item.get('role') in ('image','raw_frame','frame_metadata','input','output','measurement'):artifact(folder,report.parent.parent.name,item['path'])
         (folder/'archive-complete.json').write_text(json.dumps({'verified':True}))

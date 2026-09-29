@@ -1,0 +1,22 @@
+{
+  "id": "FILE-PERSIST-REBOOT",
+  "version": "1.0.0",
+  "name": "文件写入与重启持久化",
+  "category": "basic",
+  "scenario": "storage",
+  "risk_level": "state_change",
+  "entrypoint": "test-cases/FILE-PERSIST-REBOOT/1.0.0/run.py",
+  "timeout_seconds": 900,
+  "parameters": {},
+  "assertions": [
+    "独立持久目录写入，重启前后 SHA-256 一致",
+    "验证同一 CPU 序列号/USB 端口/固件重连；保留 4 KiB 测试文件（无删除接口）"
+  ],
+  "required_capabilities": [
+    "cli.file-list.v1",
+    "cli.file-put.v1",
+    "cli.file-get.v1",
+    "cli.reboot.v1"
+  ],
+  "revision": "2026-09-29-factory-storage"
+}

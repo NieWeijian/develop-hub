@@ -1,0 +1,34 @@
+{
+  "id": "FACTORY-CALIB",
+  "version": "1.0.0",
+  "name": "测试标定文件上传与恢复",
+  "category": "basic",
+  "scenario": "factory",
+  "risk_level": "state_change",
+  "entrypoint": "test-cases/FACTORY-CALIB/1.0.0/run.py",
+  "timeout_seconds": 900,
+  "parameters": {},
+  "assertions": [
+    "使用固定 YAML 测试夹具，通过 set-calib 上传",
+    "回读 SHA-256 与测试夹具一致，模块 SN 与 YAML 一致",
+    "恢复原标定文件，重启后 SHA-256/SN 一致，恢复原模式；不判标定精度"
+  ],
+  "required_capabilities": [
+    "cli.get-sn.v1",
+    "cli.get-param.v1",
+    "cli.set-device-mode.v1",
+    "cli.file-get.v1",
+    "cli.set-calib.v1",
+    "cli.reboot.v1"
+  ],
+  "revision": "2026-09-29-factory-storage",
+  "fixture_path": "test-cases/FACTORY-CALIB/1.0.0/fixtures/R3211101263200010.yaml",
+  "fixture_sha256": "cc8e6ae3f1522051628e2cd26e090376792857ec376155fdee52923160ec330b",
+  "files": [
+    {
+      "path": "fixtures/R3211101263200010.yaml",
+      "sha256": "cc8e6ae3f1522051628e2cd26e090376792857ec376155fdee52923160ec330b"
+    }
+  ],
+  "fixture_source": "//10.10.10.164/Linux_Repository/结构光/CalibData/RMSL321/calibration_sessions/R3211101263200010/20260808_104946_915/R3211101263200010.yaml"
+}

@@ -7,6 +7,7 @@ from switch_runtime import SPECS
 
 ROOT=Path(__file__).resolve().parent
 INFO_CODES=tuple(json.loads((ROOT/'info-codes.json').read_text()))
+FACTORY_CODES=tuple(json.loads((ROOT/'factory-codes.json').read_text()))
 
 def execute(job,config):
     if config.get('flash') or config.get('artifacts'):raise RuntimeError('Quick tests cannot include flash instructions or firmware artifacts')
@@ -21,13 +22,13 @@ def execute(job,config):
     all_pass=True
     for index,item in enumerate(config['test_cases']):
         code=item['code']
-        if code not in SPECS and code not in INFO_CODES:raise RuntimeError('Unregistered quick testcase')
+        if code not in SPECS and code not in INFO_CODES and code not in FACTORY_CODES:raise RuntimeError('Unregistered quick testcase')
         out=job.path/'cases'/code/'attempt-001';out.mkdir(parents=True,exist_ok=False)
         tool_package=item.get('adapter',{}).get('tools_package') or json.loads((ROOT/'tools.lock.json').read_text())
         tool=ROOT/tool_package['binary_path']
         if digest(tool)!=tool_package['binary_sha256']:raise RuntimeError('Frozen tool binary checksum mismatch')
         data={'definition':item.get('adapter',{}),'tools_package':tool_package,'device':target,'tool':str(tool),'tool_sha256':digest(tool),'video':matching[0]['video'],'parameters':item.get('parameters',{})}
-        if code in INFO_CODES:
+        if code in INFO_CODES or code in FACTORY_CODES:
             from rv1126b import locked_hidraw
             matches=[d for d in discover() if all(d[k]==target[k] for k in ('serial','usb_port','version'))]
             if len(matches)!=1:raise RuntimeError('Locked device unavailable for information case')

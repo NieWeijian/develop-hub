@@ -1,0 +1,24 @@
+{
+  "id": "FACTORY-BOARD-SN",
+  "version": "1.0.0",
+  "name": "上下板 SN 写入与持久化",
+  "category": "basic",
+  "scenario": "factory",
+  "risk_level": "state_change",
+  "entrypoint": "test-cases/FACTORY-BOARD-SN/1.0.0/run.py",
+  "timeout_seconds": 900,
+  "parameters": {},
+  "assertions": [
+    "calib 模式分别改上板/下板 SN，检查不串写，重启回读",
+    "rgb+depth 下检查 SN 与出图；恢复原 SN 并重启校验，最终 rgb+depth",
+    "原 SN 为空时阻塞：现有 tools 不能恢复空 SN"
+  ],
+  "required_capabilities": [
+    "cli.get-board-sn.v1",
+    "cli.set-board-sn.v1",
+    "cli.get-param.v1",
+    "cli.set-device-mode.v1",
+    "cli.reboot.v1"
+  ],
+  "revision": "2026-09-29-factory-storage"
+}

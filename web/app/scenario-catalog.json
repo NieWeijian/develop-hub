@@ -134,38 +134,29 @@
         {
           "code": "FACTORY-SN",
           "name": "模组 SN 写入与持久化",
-          "capability": "待适配",
-          "tool": "get/set-sn",
-          "matrix": "合法值、长度边界、非法字符",
-          "assertion": "备份原 SN，写后回读，重启回读，再恢复并验证；仅专用测试模组",
-          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp、ai/knowledge/factory-ft.md"
+          "capability": "已接入 1.0.0",
+          "tool": "get-sn / set-sn / file-get / set-calib / get-param / set-device-mode / reboot",
+          "matrix": "当前固件与锁定模组；测试前备份，结束恢复",
+          "assertion": "calib 模式写入模组 SN，立即及重启后回读；切 rgb+depth 检查 SN 与出图；恢复原标定/SN 并重启校验，最终 rgb+depth",
+          "source": "bench/factory_runtime.py"
         },
         {
           "code": "FACTORY-BOARD-SN",
-          "name": "上下板 SN",
-          "capability": "待适配",
-          "tool": "get/set-board-sn",
-          "matrix": "上下板独立值与边界",
-          "assertion": "检查字段不串写、重启持久性、错误输入拒绝和原值恢复",
-          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp、ai/knowledge/factory-ft.md"
-        },
-        {
-          "code": "FACTORY-AGING",
-          "name": "老化状态与完整周期",
-          "capability": "待适配",
-          "tool": "ft + 老化状态",
-          "matrix": "未运行 / 运行中 / 成功 / 失败；短诊断与完整周期分开",
-          "assertion": "分别验证温度、I2C、USB、MIPI、Flash、DDR、同步；单个 overall_pass 或 set-ft-aging 不代表真实老化通过",
-          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp、ai/knowledge/factory-ft.md"
+          "name": "上下板 SN 写入与持久化",
+          "capability": "已接入 1.0.0",
+          "tool": "get-board-sn / set-board-sn / get-param / set-device-mode / reboot",
+          "matrix": "当前固件与锁定模组；测试前备份，结束恢复",
+          "assertion": "calib 模式分别改上板/下板 SN，检查不串写，重启回读；rgb+depth 下检查 SN 与出图；恢复原 SN 并重启校验，最终 rgb+depth；原 SN 为空时阻塞：现有 tools 不能恢复空 SN",
+          "source": "bench/factory_runtime.py"
         },
         {
           "code": "FACTORY-CALIB",
-          "name": "标定文件与模式",
-          "capability": "待适配",
-          "tool": "get-calib + 受控工装",
-          "matrix": "标定文件完整性 / 模式 / 加载行为",
-          "assertion": "只读校验先接入；写入仅备份可恢复的专用设备，验证加载结果而非上传成功",
-          "source": "tools/uvc_host_ctl.cpp、uvc_host_ft.cpp、ai/knowledge/factory-ft.md"
+          "name": "测试标定文件上传与恢复",
+          "capability": "已接入 1.0.0",
+          "tool": "get-sn / get-param / set-device-mode / file-get / set-calib / reboot",
+          "matrix": "当前固件与锁定模组；测试前备份，结束恢复",
+          "assertion": "使用固定 YAML 测试夹具，通过 set-calib 上传；回读 SHA-256 与测试夹具一致，模块 SN 与 YAML 一致；恢复原标定文件，重启后 SHA-256/SN 一致，恢复原模式；不判标定精度",
+          "source": "bench/factory_runtime.py"
         }
       ]
     },
@@ -210,39 +201,30 @@
       "cases": [
         {
           "code": "FILE-PERSIST-REBOOT",
-          "name": "文件重启后持久化",
-          "capability": "待适配",
-          "tool": "file-put / file-get + reboot",
-          "matrix": "持久分区专用测试路径 × 文件大小",
-          "assertion": "写入→SHA-256 回读→重启同设备→再次回读；/tmp 往返不属于此项",
-          "source": "tools/uvc_host_ctl.cpp、bench/test_runtime.py"
+          "name": "文件写入与重启持久化",
+          "capability": "已接入 1.0.0",
+          "tool": "file-list / file-put / file-get / reboot",
+          "matrix": "当前固件与锁定模组；测试前备份，结束恢复",
+          "assertion": "独立持久目录写入，重启前后 SHA-256 一致；验证同一 CPU 序列号/USB 端口/固件重连；保留 4 KiB 测试文件（无删除接口）",
+          "source": "bench/factory_runtime.py"
         },
         {
-          "code": "FILE-PERSIST-POWER",
-          "name": "文件断电后持久化",
-          "capability": "待适配",
-          "tool": "文件工具 + 可控供电工装",
-          "matrix": "写完成后断电 / 写入中断电分开",
-          "assertion": "断电后数据一致或符合明确定义的原子性；记录继电器时间及设备重连",
-          "source": "tools/uvc_host_ctl.cpp、bench/test_runtime.py"
+          "code": "FILE-MODULE-LOG",
+          "name": "模组当前日志拉取",
+          "capability": "已接入 1.0.0",
+          "tool": "get-log / file-list / file-get",
+          "matrix": "当前固件与锁定模组；测试前备份，结束恢复",
+          "assertion": "获取日志尾部及 lasted.log，完整文件非空；超过 60000 字节时阻塞，要求固件工具提供分段下载",
+          "source": "bench/factory_runtime.py"
         },
         {
-          "code": "FILE-BOUNDARY",
-          "name": "文件边界与失败恢复",
-          "capability": "待适配",
-          "tool": "file-put / file-get",
-          "matrix": "空文件、分块边界、非对齐长度、非法路径、空间不足",
-          "assertion": "错误可识别，无越界写入和静默截断；隔离路径，备份与清理可验证",
-          "source": "tools/uvc_host_ctl.cpp、bench/test_runtime.py"
-        },
-        {
-          "code": "PARAM-PERSIST",
-          "name": "参数重启持久性",
-          "capability": "待适配",
-          "tool": "FOV / 模式 / USB profile",
-          "matrix": "每个持久参数 × 重启",
-          "assertion": "写后回读与重启后回读分别断言，结束恢复；当前 FOV 用例只验证即时回读",
-          "source": "tools/uvc_host_ctl.cpp、bench/test_runtime.py"
+          "code": "FILE-ARCHIVE-LOG",
+          "name": "模组 archive 日志拉取",
+          "capability": "已接入 1.0.0",
+          "tool": "file-list / file-get",
+          "matrix": "当前固件与锁定模组；测试前备份，结束恢复",
+          "assertion": "枚举 archived，下载全部 gzip 文件，校验长度及 gzip CRC；无归档或存在超出 60000 字节的文件时阻塞",
+          "source": "bench/factory_runtime.py"
         }
       ]
     },
@@ -277,6 +259,15 @@
           "matrix": "循环次数 / 次序 / 随机种子",
           "source": "独立压测目录",
           "assertion": "复用单次切换用例，记录逐轮恢复时间、帧率、温度、掉线与失败轮次"
+        },
+        {
+          "code": "FACTORY-AGING",
+          "name": "老化触发与日志完整性",
+          "capability": "特殊场景待工装",
+          "tool": "DCP 老化工装 + 日志采集",
+          "matrix": "USB PHY 检测 DCP=1，普通 host 端口禁用不等价",
+          "assertion": "验证启动、周期温度/FPS、判定及结束日志；工具还需支持大文件下载",
+          "source": "script/rv1126b/RkLunch.sh、src/ft/aging/struct_light_aging.cpp"
         }
       ]
     }

@@ -123,9 +123,9 @@ class Job:
         for index,item in enumerate(config['test_cases']):
             adapter=item.get('adapter') or {};code=adapter.get('id','')
             from switch_runtime import SPECS
-            if code not in ('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP','SWITCH-ROTATE-CONTROL') and code not in SPECS and code not in json.loads((root/'info-codes.json').read_text()): raise RuntimeError('Unregistered test adapter')
+            if code not in ('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP','SWITCH-ROTATE-CONTROL') and code not in SPECS and code not in json.loads((root/'info-codes.json').read_text()) and code not in json.loads((root/'factory-codes.json').read_text()): raise RuntimeError('Unregistered test adapter')
             for name,expected in adapter.get('support_sha256',{}).items():
-                if name not in ('switch_runtime.py','telemetry_runtime.py','frame_images.py','host-capture','host-imu','rv1126b.py') or digest(root/name)!=expected:raise RuntimeError('Capture runtime hash mismatch')
+                if name not in ('factory_runtime.py','switch_runtime.py','telemetry_runtime.py','frame_images.py','host-capture','host-imu','rv1126b.py') or digest(root/name)!=expected:raise RuntimeError('Capture runtime hash mismatch')
             entry=root/'test-cases'/code/'1.0.0/run.py'
             if digest(tool)!=adapter['tool_sha256'] or digest(root/'test_runtime.py')!=adapter['runtime_sha256'] or digest(entry)!=adapter['entrypoint_sha256'] or digest(entry.parent/'case.json')!=adapter['definition_sha256']:
                 raise RuntimeError('Test package version/hash mismatch')
@@ -133,7 +133,7 @@ class Job:
                 if digest(entry.parent/fixture['path'])!=fixture['sha256']: raise RuntimeError('Fixture hash mismatch')
             out=self.path/'cases'/code/'attempt-001';out.mkdir(parents=True,exist_ok=False)
             data={'tools_package':tool_package,'round_id':config['round_id'],'case_id':code,'definition':adapter,'tool':str(tool),'tool_sha256':adapter['tool_sha256'],'video':video,'usb_location':location,'commit':config['source']['commit'],'firmware_sha256':self.result['firmware_sha256'],'parameters':item.get('parameters',{})}
-            if code in SPECS or code in json.loads((root/'info-codes.json').read_text()):
+            if code in SPECS or code in json.loads((root/'info-codes.json').read_text()) or code in json.loads((root/'factory-codes.json').read_text()):
                 from rv1126b import discover
                 matching=[d for d in discover() if d['serial']==config['flash']['device_serial'] and self.usb_location(Path(d['usb_path']))==location]
                 if len(matching)!=1:raise RuntimeError('Target device unavailable for switching case')
@@ -147,7 +147,7 @@ class Job:
             atomic(out/'case-input.json',data)
             self.result['cases'][index]={'id':item['id'],'code':code,'name':item['name'],'state':'running'}
             self.save(message='Running '+code,current_case=code)
-            rc,_=self.run(['/usr/bin/python3',str(entry),'--input',str(out/'case-input.json'),'--output-dir',str(out)],code+'.log',900 if code in SPECS else 180 if code.startswith('INFO-') else 120)
+            rc,_=self.run(['/usr/bin/python3',str(entry),'--input',str(out/'case-input.json'),'--output-dir',str(out)],code+'.log',900 if code in SPECS or code in json.loads((root/'factory-codes.json').read_text()) else 180 if code.startswith('INFO-') else 120)
             result=json.loads((out/'result.json').read_text())
             passed=rc==0 and result.get('state')=='finished' and result.get('outcome')=='passed' and bool(result.get('assertions')) and all(a.get('passed') is True for a in result['assertions'])
             all_pass=all_pass and passed

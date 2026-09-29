@@ -1,0 +1,25 @@
+{
+  "id": "FACTORY-SN",
+  "version": "1.0.0",
+  "name": "模组 SN 写入与持久化",
+  "category": "basic",
+  "scenario": "factory",
+  "risk_level": "state_change",
+  "entrypoint": "test-cases/FACTORY-SN/1.0.0/run.py",
+  "timeout_seconds": 900,
+  "parameters": {},
+  "assertions": [
+    "calib 模式写入模组 SN，立即及重启后回读",
+    "切 rgb+depth 检查 SN 与出图；恢复原标定/SN 并重启校验，最终 rgb+depth"
+  ],
+  "required_capabilities": [
+    "cli.get-sn.v1",
+    "cli.set-sn.v1",
+    "cli.file-get.v1",
+    "cli.set-calib.v1",
+    "cli.get-param.v1",
+    "cli.set-device-mode.v1",
+    "cli.reboot.v1"
+  ],
+  "revision": "2026-09-29-factory-storage"
+}
