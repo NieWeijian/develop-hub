@@ -1,7 +1,7 @@
 {
-  "version": "0.3.0",
+  "version": "0.4.0",
   "source_commit": "4cfb935",
-  "reviewed_at": "2026-09-28",
+  "reviewed_at": "2026-09-29",
   "status": "design",
   "scenarios": [
     {
@@ -229,45 +229,63 @@
       ]
     },
     {
-      "id": "recovery",
-      "icon": "↻",
-      "name": "压测",
+      "id": "special",
+      "icon": "◇",
+      "name": "特殊场景",
       "cases": [
         {
-          "code": "STABILITY-SOAK",
-          "name": "长时间多流运行",
-          "capability": "待适配",
-          "tool": "stream + imu + ctl",
-          "matrix": "产品定义持续时间与负载",
-          "assertion": "持续保存 FPS、温度、RTT、资源指标；异常不中断证据归档，结束正常清理",
-          "source": "tools/rmsl_single_module_test、uvc_host_multisync.cpp、uvc_host_ota.cpp"
+          "code": "SPECIAL-SN-POWER-CYCLE",
+          "name": "手动断电后 SN 持久化",
+          "capability": "占位 · 待定义",
+          "tool": "待明确",
+          "matrix": "待明确",
+          "assertion": "仅保留用例位置；测试步骤、参数、判定标准及恢复方式后续单独定义。",
+          "source": "用户确认的特殊场景清单，2026-09-29"
+        },
+        {
+          "code": "SPECIAL-LOG-FULL",
+          "name": "日志区占满异常检查",
+          "capability": "占位 · 待定义",
+          "tool": "待明确",
+          "matrix": "待明确",
+          "assertion": "仅保留用例位置；测试步骤、参数、判定标准及恢复方式后续单独定义。",
+          "source": "用户确认的特殊场景清单，2026-09-29"
+        },
+        {
+          "code": "SPECIAL-RGB-IMU-ALIGN",
+          "name": "RGB 与 IMU 对齐",
+          "capability": "占位 · 待定义",
+          "tool": "待明确",
+          "matrix": "待明确",
+          "assertion": "仅保留用例位置；测试步骤、参数、判定标准及恢复方式后续单独定义。",
+          "source": "用户确认的特殊场景清单，2026-09-29"
+        },
+        {
+          "code": "FACTORY-AGING",
+          "name": "老化测试",
+          "capability": "占位 · 待定义",
+          "tool": "待明确",
+          "matrix": "待明确",
+          "assertion": "仅保留用例位置；测试步骤、参数、判定标准及恢复方式后续单独定义。",
+          "source": "用户确认的特殊场景清单，2026-09-29"
+        },
+        {
+          "code": "SPECIAL-OTA",
+          "name": "OTA 测试",
+          "capability": "占位 · 待定义",
+          "tool": "待明确",
+          "matrix": "待明确",
+          "assertion": "仅保留用例位置；测试步骤、参数、判定标准及恢复方式后续单独定义。",
+          "source": "用户确认的特殊场景清单，2026-09-29"
         },
         {
           "code": "SYNC-MULTI",
           "name": "多模组同步",
-          "capability": "待适配",
-          "tool": "multisync",
-          "matrix": "主从拓扑、同步治具和模组数量",
-          "assertion": "按序号配对并判定时间偏差、漂移、失步恢复；缺治具阻塞",
-          "source": "tools/rmsl_single_module_test、uvc_host_multisync.cpp、uvc_host_ota.cpp"
-        },
-        {
-          "code": "STRESS-SWITCH",
-          "name": "反复切换稳定性",
-          "capability": "后续实现",
-          "tool": "原子功能切换用例组合",
-          "matrix": "循环次数 / 次序 / 随机种子",
-          "source": "独立压测目录",
-          "assertion": "复用单次切换用例，记录逐轮恢复时间、帧率、温度、掉线与失败轮次"
-        },
-        {
-          "code": "FACTORY-AGING",
-          "name": "老化触发与日志完整性",
-          "capability": "特殊场景待工装",
-          "tool": "DCP 老化工装 + 日志采集",
-          "matrix": "USB PHY 检测 DCP=1，普通 host 端口禁用不等价",
-          "assertion": "验证启动、周期温度/FPS、判定及结束日志；工具还需支持大文件下载",
-          "source": "script/rv1126b/RkLunch.sh、src/ft/aging/struct_light_aging.cpp"
+          "capability": "占位 · 待定义",
+          "tool": "待明确",
+          "matrix": "待明确",
+          "assertion": "仅保留用例位置；测试步骤、参数、判定标准及恢复方式后续单独定义。",
+          "source": "用户确认的特殊场景清单，2026-09-29"
         }
       ]
     }
