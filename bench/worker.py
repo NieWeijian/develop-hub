@@ -16,6 +16,21 @@ import sys
 import time
 
 
+def validate_adapter_registration(root, adapter):
+    """Shared allowlist and dependency checks for pre-flash and execution."""
+    from switch_runtime import SPECS
+    allowed = {'BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP','SWITCH-ROTATE-CONTROL'} | set(SPECS)
+    for filename in ('info-codes.json','factory-codes.json'):
+        allowed.update(json.loads((root/filename).read_text()))
+    code = adapter.get('id')
+    if code not in allowed:
+        raise RuntimeError('Unregistered test adapter: '+str(code))
+    support = {'stream_quality.py','uvc_host_stream-metrics','factory_runtime.py','switch_runtime.py','telemetry_runtime.py','frame_images.py','host-capture','host-imu','rv1126b.py'}
+    for name, expected in adapter.get('support_sha256', {}).items():
+        if name not in support or not (root/name).is_file() or digest(root/name) != expected:
+            raise RuntimeError('Test support file missing, unsupported or checksum mismatch: '+str(name))
+
+
 def timestamp():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -123,9 +138,7 @@ class Job:
         for index,item in enumerate(config['test_cases']):
             adapter=item.get('adapter') or {};code=adapter.get('id','')
             from switch_runtime import SPECS
-            if code not in ('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP','SWITCH-ROTATE-CONTROL') and code not in SPECS and code not in json.loads((root/'info-codes.json').read_text()) and code not in json.loads((root/'factory-codes.json').read_text()): raise RuntimeError('Unregistered test adapter')
-            for name,expected in adapter.get('support_sha256',{}).items():
-                if name not in ('stream_quality.py','uvc_host_stream-metrics','factory_runtime.py','switch_runtime.py','telemetry_runtime.py','frame_images.py','host-capture','host-imu','rv1126b.py') or digest(root/name)!=expected:raise RuntimeError('Capture runtime hash mismatch')
+            validate_adapter_registration(root, adapter)
             entry=root/'test-cases'/code/'1.0.0/run.py'
             if digest(tool)!=adapter['tool_sha256'] or digest(root/'test_runtime.py')!=adapter['runtime_sha256'] or digest(entry)!=adapter['entrypoint_sha256'] or digest(entry.parent/'case.json')!=adapter['definition_sha256']:
                 raise RuntimeError('Test package version/hash mismatch')

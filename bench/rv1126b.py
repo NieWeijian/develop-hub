@@ -44,7 +44,7 @@ def discover():
 
 
 def validate_images(job, config):
-    from worker import digest
+    from worker import digest, validate_adapter_registration
     if config.get('baseline',{}).get('board_config') != BOARD:
         raise RuntimeError('RV1126B Board Config is not supported by the RMSL321 V2.0 adapter')
     images = config.get('artifacts',[])
@@ -64,16 +64,12 @@ def validate_images(job, config):
         raise RuntimeError('Verified XU control tool required before flashing')
     for adapter in adapters:
         code = adapter.get('id')
-        from switch_runtime import SPECS
-        if code not in ('BASIC-VERSION','BASIC-FOV-READ','BASIC-FOV-WRITE','BASIC-FILE-ROUNDTRIP','SWITCH-ROTATE-CONTROL') and code not in SPECS and code not in json.loads((ROOT/'info-codes.json').read_text()):
-            raise RuntimeError('Unregistered test adapter')
+        validate_adapter_registration(ROOT, adapter)
         folder = ROOT/'test-cases'/code/'1.0.0'
         checks = [(ROOT/'test_runtime.py', 'runtime_sha256'), (folder/'run.py', 'entrypoint_sha256'), (folder/'case.json','definition_sha256')]
         for path, key in checks:
             if not path.is_file() or digest(path) != adapter.get(key):
                 raise RuntimeError('Test package hash mismatch before flash: '+key)
-        for name,expected in adapter.get('support_sha256',{}).items():
-            if name not in ('switch_runtime.py','telemetry_runtime.py','frame_images.py','host-capture','host-imu','rv1126b.py') or digest(ROOT/name)!=expected:raise RuntimeError('Capture runtime mismatch before flash')
         for fixture in adapter.get('files', []):
             path = (folder/fixture['path']).resolve()
             if folder.resolve() not in path.parents or not path.is_file() or digest(path) != fixture['sha256']:

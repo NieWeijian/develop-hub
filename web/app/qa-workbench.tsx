@@ -271,7 +271,7 @@ function RoundResults({round,onEvidence,onChanged}:{round:TestRound;onEvidence:(
     [round.product_snapshot.developer_mode ? '编译与烧录（已跳过）' : '编译与镜像',round.product_snapshot.developer_mode ? 'skipped' : round.build_result?.passed === true ? 'passed' : round.build_result?.passed === false ? 'failed' : round.status==='building' ? 'running' : 'pending'],
     ['测试台交付',round.delivery_result?.passed === true ? 'passed' : round.delivery_result?.passed === false ? 'failed' : round.status==='transferring' ? 'running' : 'pending'],
     [round.product_snapshot.developer_mode ? '当前固件身份确认' : '烧录后启动确认',(round.product_snapshot.developer_mode ? round.controller_result?.identity_verified : round.controller_result?.boot_verified) === true ? 'passed' : 'pending'],
-    ['用例执行',round.status==='test_complete' ? 'passed' : round.status==='test_failed' ? 'failed' : results.some(r=>r.state==='running') ? 'running' : 'pending'],
+    ['用例执行',round.status==='test_complete' ? 'passed' : round.status==='test_failed' ? 'failed' : round.status==='blocked' ? 'blocked' : results.some(r=>r.state==='running') ? 'running' : 'pending'],
   ];
   return <section className="panel wb-results">
     <header><div><span className="panel-label">TEST RESULTS</span><h3>用例结果</h3></div><span className={`wb-outcome result-${round.case_classification_verdict || 'pending'}`}>当前分类：{outcomeLabels[round.case_classification_verdict] || '未测'}</span></header>

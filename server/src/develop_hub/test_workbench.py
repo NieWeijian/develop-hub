@@ -704,7 +704,8 @@ class TestRoundWorkflow:
                             raise TestWorkbenchError('Controller result revision regressed')
                         current.controller_result = {**report, 'received_at': now().isoformat()}
                         if report.get('state') in {'finished','rejected','interrupted'}:
-                            if any(c.get('code','').startswith('SWITCH-') for c in current.test_case_snapshot):
+                            preflight_blocked = report.get('phase') == 'validating' and report.get('outcome') != 'passed' and 'flash_exit_code' not in report and all(c.get('state') == 'blocked' for c in report.get('cases', []))
+                            if not preflight_blocked and any(c.get('code','').startswith('SWITCH-') for c in current.test_case_snapshot):
                                 from .evidence_store import archive
                                 try:
                                     await archive(self,bench,path,current.display_number)
@@ -720,9 +721,10 @@ class TestRoundWorkflow:
                                 else:
                                     passed = report_passed(report, [case['id'] for case in current.test_case_snapshot])
                             current.status = (TestRoundStatus.TEST_COMPLETE if passed else TestRoundStatus.TEST_FAILED) if current.product_snapshot.get('execute_test_cases') else (TestRoundStatus.FLASH_COMPLETE if passed else TestRoundStatus.BENCH_FAILED)
+                            if preflight_blocked: current.status = TestRoundStatus.BLOCKED
                             current.completed_at = now()
                             if not passed: current.last_error = report.get('message','Controller reported failure')
-                            self._event(db,current,'bench_result','succeeded' if passed else 'failed', report.get('message','Bench finished'), report)
+                            self._event(db,current,'bench_result','blocked' if preflight_blocked else 'succeeded' if passed else 'failed', report.get('message','Bench finished'), report)
                         elif previous.get('phase') != report.get('phase'):
                             self._event(db,current,'bench_'+report.get('phase','unknown'),'running',report.get('message','Bench running'))
                         db.commit()
