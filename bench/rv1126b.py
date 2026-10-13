@@ -45,6 +45,11 @@ def discover():
 
 def validate_images(job, config):
     from worker import digest, validate_adapter_registration
+    from firmware_identity import source_identity
+    try:
+        source_identity(config.get('source'))
+    except ValueError as exc:
+        raise RuntimeError('Invalid firmware identity before flash: '+str(exc)) from exc
     if config.get('baseline',{}).get('board_config') != BOARD:
         raise RuntimeError('RV1126B Board Config is not supported by the RMSL321 V2.0 adapter')
     images = config.get('artifacts',[])
@@ -95,15 +100,12 @@ def execute(job, config):
     counter=ROOT/'flash-counts.json'
     counts=json.loads(counter.read_text()) if counter.exists() else {}
     device_counts=counts.setdefault(device['serial'],{'a':0,'b':0})
-    # Honor the existing installation's conservative wear ledger until explicitly overridden.
+    # Keep historical write counts for audit; counts never limit future writes.
     legacy={}
     if LEGACY_COUNTS.exists():
         for line in LEGACY_COUNTS.read_text().splitlines():
             key,value=line.split();legacy[key]=int(value)
     used=max(device_counts.get(slot,0),legacy.get(slot,0))
-    override=target.get('allow_wear_limit_override') is True
-    if used>=3 and not override:
-        raise RuntimeError('Target slot has reached the 3-write limit; explicit development override required')
     rc,output=job.run(['sudo','-n','dfu-util','--version'],'dfu-version.log',10)
     if rc:
         raise RuntimeError('dfu-util or its permissions are unavailable')
@@ -111,7 +113,7 @@ def execute(job, config):
     if not physical:
         raise RuntimeError('Cannot bind physical USB port')
     job.save('checking_device',message='Verified RMSL321 identity, image hashes and opposite boot slot',
-             device=device,source_slot=current,target_slot=slot,wear_limit_override=override,
+             device=device,source_slot=current,target_slot=slot,
              firmware_sha256=next(i['sha256'] for i in images if i['filename']=='oem.img'),
              firmware_artifacts=images,usb_location=physical)
     # Reserve a write before requesting erase; interrupted/failed attempts still count.

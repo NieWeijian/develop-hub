@@ -25,7 +25,7 @@ def validate_adapter_registration(root, adapter):
     code = adapter.get('id')
     if code not in allowed:
         raise RuntimeError('Unregistered test adapter: '+str(code))
-    support = {'stream_quality.py','uvc_host_stream-metrics','factory_runtime.py','switch_runtime.py','telemetry_runtime.py','frame_images.py','host-capture','host-imu','rv1126b.py'}
+    support = {'firmware_identity.py','stream_quality.py','uvc_host_stream-metrics','factory_runtime.py','switch_runtime.py','telemetry_runtime.py','frame_images.py','host-capture','host-imu','rv1126b.py'}
     for name, expected in adapter.get('support_sha256', {}).items():
         if name not in support or not (root/name).is_file() or digest(root/name) != expected:
             raise RuntimeError('Test support file missing, unsupported or checksum mismatch: '+str(name))
@@ -106,6 +106,8 @@ class Job:
         return ''
 
     def run_tests(self, config, location):
+        from firmware_identity import source_identity, matches_firmware_identity
+        identity = source_identity(config.get('source'))
         root=Path(__file__).resolve().parent
         tool_package=next((item.get('adapter',{}).get('tools_package') for item in config['test_cases'] if item.get('adapter',{}).get('tools_package')),None) or json.loads((root/'tools.lock.json').read_text())
         tool=root/tool_package['binary_path']
@@ -121,7 +123,7 @@ class Job:
                 candidate='/dev/'+node.name
                 rc,text=self.run([str(tool),'--device',candidate,'get-version'],'boot-version.log',30)
                 if rc == 0: version = text.strip()
-                identity_ok = rc == 0 and config['source']['commit'][:7] in text
+                identity_ok = rc == 0 and matches_firmware_identity(identity, text)
                 if identity_ok and config.get('flash',{}).get('target_chip') == 'RV1126B':
                     identity_rc, cpu = self.run([str(tool),'--device',candidate,'get-cpu-serial'],'boot-cpu.log',30)
                     identity_ok = identity_rc == 0 and cpu.strip() == config['flash']['device_serial']
@@ -145,7 +147,7 @@ class Job:
             for fixture in adapter.get('files',[]):
                 if digest(entry.parent/fixture['path'])!=fixture['sha256']: raise RuntimeError('Fixture hash mismatch')
             out=self.path/'cases'/code/'attempt-001';out.mkdir(parents=True,exist_ok=False)
-            data={'tools_package':tool_package,'round_id':config['round_id'],'case_id':code,'definition':adapter,'tool':str(tool),'tool_sha256':adapter['tool_sha256'],'video':video,'usb_location':location,'commit':config['source']['commit'],'firmware_sha256':self.result['firmware_sha256'],'parameters':item.get('parameters',{})}
+            data={'tools_package':tool_package,'round_id':config['round_id'],'case_id':code,'definition':adapter,'tool':str(tool),'tool_sha256':adapter['tool_sha256'],'video':video,'usb_location':location,'commit':config['source'].get('commit',''),'firmware_identity':identity,'firmware_sha256':self.result['firmware_sha256'],'parameters':item.get('parameters',{})}
             if code in SPECS or code in json.loads((root/'info-codes.json').read_text()) or code in json.loads((root/'factory-codes.json').read_text()):
                 from rv1126b import discover
                 matching=[d for d in discover() if d['serial']==config['flash']['device_serial'] and self.usb_location(Path(d['usb_path']))==location]
@@ -185,6 +187,9 @@ class Job:
             from quick_tests import execute
             execute(self,config)
             return
+        if config.get('execute_test_cases'):
+            from firmware_identity import source_identity
+            source_identity(config.get('source'))
         if config.get('flash',{}).get('target_chip')=='RV1126B':
             from rv1126b import execute
             execute(self, config)

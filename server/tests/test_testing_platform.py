@@ -243,3 +243,90 @@ def test_paused_schedule_does_not_run_queued_job(context):
     asyncio.run(p.ScheduleEngine(None).dispatch(job.id))
     context.db.expire_all()
     assert context.db.get(ScheduleRun,job.id).state=='skipped'
+
+
+def test_live_coverage_tracks_each_case_without_finalizing_early(context):
+    row,candidate,plan,req=fixture_round(context)
+    specs=[('complete','finished'),('current','running'),('waiting','queued'),('blocked','blocked')]
+    requirements=[{**req,'id':new_id(),'code':name,'case_id':name} for name,_ in specs]
+    plan.requirements=requirements
+    row.test_case_snapshot=[{'id':r['case_id'],'code':r['code'],'adapter':r['adapter'],'parameters':{}} for r in requirements]
+    row.status=Status.BENCH_RUNNING
+    row.controller_result={**row.controller_result,'state':'running','cases':[
+        {'id':name,'state':state,'outcome':'passed' if state=='finished' else None,
+         'assertions_total':1,'assertions_passed':1,'recovery':{'state':'passed'}} for name,state in specs]}
+    for requirement in requirements:
+        context.db.add(ValidationEvidence(plan_id=plan.id,requirement_id=requirement['id'],
+            requirement_hash=p.spec_hash(requirement),round_id=row.id,payload={}))
+    context.db.commit()
+    report=p.coverage(context.db,plan)
+    assert report['counts']=={'completed':1,'running':1,'queued':1,'blocked':1}
+    assert not report['ready']
+    with pytest.raises(HTTPException):
+        p.finalize(plan.id,p.Finalize(revision=plan.revision,operator='tester'),context.db)
+    with pytest.raises(HTTPException):
+        p.link_evidence(plan.id,p.LinkEvidence(round_id=row.id,requirement_ids=[requirements[0]['id']]),context.db)
+
+
+@pytest.mark.parametrize('status', p.ACTIVE)
+def test_active_round_without_controller_case_is_queued(context,status):
+    row,candidate,_,req=fixture_round(context)
+    row.status=Status(status)
+    row.controller_result={}
+    assert p.round_evidence(row,req,candidate)[0]=='queued'
+
+
+@pytest.mark.parametrize('missing', ['boot','flash','delivery','assertions','recovery','finished_report'])
+def test_completed_case_still_requires_terminal_evidence(context,missing):
+    row,candidate,_,req=fixture_round(context)
+    row.status=Status.BENCH_RUNNING
+    report=deepcopy(row.controller_result)
+    report['state']='running'
+    row.controller_result=report
+    assert p.round_evidence(row,req,candidate)[0]=='completed'
+    row.status=Status.TEST_COMPLETE
+    report['state']='finished'
+    if missing=='boot': report['boot_verified']=False
+    elif missing=='flash': report['flash_exit_code']=1
+    elif missing=='delivery': row.delivery_result={'passed':False}
+    elif missing=='assertions': report['cases'][0]['assertions_passed']=0
+    elif missing=='recovery': report['cases'][0]['recovery']={'state':'failed'}
+    elif missing=='finished_report': report['state']='interrupted'
+    assert p.round_evidence(row,req,candidate)[0] in ('blocked','error')
+
+
+def test_completed_case_only_passes_after_round_finishes(context):
+    row,candidate,_,req=fixture_round(context)
+    row.status=Status.BENCH_RUNNING
+    assert p.round_evidence(row,req,candidate)[0]=='completed'
+    row.status=Status.TEST_COMPLETE
+    assert p.round_evidence(row,req,candidate)[0]=='passed'
+
+
+def test_delivery_round_without_cases_creates_valid_configuration(context):
+    from develop_hub.models import TestProductStatus
+    from develop_hub.schemas import TestRoundCreate
+    from develop_hub.test_workbench import TestRoundWorkflow
+    from develop_hub.test_workbench_api import create_round_internal
+    context.product.status=TestProductStatus.READY
+    context.product.baseline_result={'passed':True}
+    context.product.manifest_snapshot={'manifest_commit':'fixed-manifest'}
+    source={'kind':'branch','ref':'refs/heads/master','commit_sha':'b'*40,'change_number':0,
+            'patchset_number':0,'subject':'master','owner':''}
+    payload=TestRoundCreate(product_id=context.product.id,bench_id=context.bench.id,test_case_ids=[],auto_start=False)
+    row=asyncio.run(create_round_internal(payload,context.db,None,source=source))
+    assert row.test_case_snapshot==[]
+    config=TestRoundWorkflow._config(row,[],context.bench)
+    assert config['test_cases']==[]
+    assert config['execute_test_cases'] is False
+    assert config['execution_boundary']=='remote_file_verification'
+
+
+@pytest.mark.parametrize('developer_mode', [False,True])
+@pytest.mark.parametrize('case_fields', [{},{'test_case_ids':[]}])
+def test_test_execution_requires_cases_in_both_modes(developer_mode,case_fields):
+    from pydantic import ValidationError
+    from develop_hub.schemas import TestRoundCreate
+    with pytest.raises(ValidationError,match='Select at least one Test Case'):
+        TestRoundCreate(product_id='product',bench_id='bench',developer_mode=developer_mode,
+            execute_test_cases=True,flash_firmware=not developer_mode,**case_fields)

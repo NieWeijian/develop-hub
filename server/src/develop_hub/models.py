@@ -627,7 +627,7 @@ class ReleaseCandidate(Base):
     __table_args__ = (UniqueConstraint('product_id', 'name', name='uq_release_candidate_name'),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     product_id: Mapped[str] = mapped_column(ForeignKey('test_products.id'), index=True)
-    source_round_id: Mapped[str] = mapped_column(ForeignKey('test_rounds.id'))
+    source_round_id: Mapped[str | None] = mapped_column(ForeignKey('test_rounds.id'), nullable=True)
     name: Mapped[str] = mapped_column(String(160))
     fingerprint: Mapped[str] = mapped_column(String(64))
     snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
@@ -677,3 +677,29 @@ class ScheduleRun(Base):
     round_id: Mapped[str | None] = mapped_column(ForeignKey('test_rounds.id'), nullable=True)
     source_commit: Mapped[str] = mapped_column(String(64), default='')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SpecialRun(Base):
+    """Durable operator gates; a reservation survives an uncertain hardware outcome."""
+    __tablename__ = 'special_runs'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    scenario_code: Mapped[str] = mapped_column(String(80), index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey('test_products.id', ondelete='RESTRICT'), index=True)
+    bench_id: Mapped[str] = mapped_column(ForeignKey('test_benches.id', ondelete='RESTRICT'), index=True)
+    status: Mapped[str] = mapped_column(String(32), default='awaiting_operator', index=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    current_step_index: Mapped[int] = mapped_column(Integer, default=0)
+    bench_reserved: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    definition_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    product_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    bench_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    device_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    tool_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    events: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    context: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    remote_path: Mapped[str] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

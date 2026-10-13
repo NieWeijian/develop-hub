@@ -8,6 +8,7 @@ import re
 import subprocess
 import time
 from worker import atomic, timestamp, digest
+from firmware_identity import source_identity, matches_firmware_identity
 
 class Case:
     def __init__(self, code, data, out):
@@ -48,8 +49,10 @@ class Case:
         try:
             self.check('Tool SHA-256',self.data['tool_sha256'],digest(Path(self.data['tool'])),digest(Path(self.data['tool']))==self.data['tool_sha256'])
             if self.code=='BASIC-VERSION':
+                source = {'identity': self.data['firmware_identity']} if 'firmware_identity' in self.data else {'commit': self.data.get('commit')}
+                identity = source_identity(source)
                 text=self.call('read-version','get-version')
-                self.check('Firmware version',self.data['commit'][:7],text,self.data['commit'][:7] in text)
+                self.check('Firmware version',identity,text,matches_firmware_identity(identity,text))
             elif self.code=='SWITCH-ROTATE-CONTROL':
                 if self.data.get('parameters'):
                     raise RuntimeError('Rotation control case does not accept parameters')

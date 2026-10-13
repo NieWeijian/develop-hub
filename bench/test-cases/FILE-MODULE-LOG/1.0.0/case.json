@@ -10,12 +10,12 @@
   "parameters": {},
   "assertions": [
     "获取日志尾部及 lasted.log，完整文件非空",
-    "超过 60000 字节时阻塞，要求固件工具提供分段下载"
+    "实际执行下载并记录工具返回，不按文件大小预先阻塞"
   ],
   "required_capabilities": [
     "cli.get-log.v1",
     "cli.file-list.v1",
     "cli.file-get.v1"
   ],
-  "revision": "2026-09-29-factory-storage"
+  "revision": "2026-10-10-log-download-response"
 }

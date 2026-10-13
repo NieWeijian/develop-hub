@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "answer", "evidence", "suggested_next_steps", "requires_code_change"],
+  "properties": {
+    "status": {"type": "string", "enum": ["answered", "blocked"]},
+    "answer": {"type": "string"},
+    "evidence": {"type": "array", "items": {"type": "string"}},
+    "suggested_next_steps": {"type": "array", "items": {"type": "string"}},
+    "requires_code_change": {"type": "boolean"}
+  }
+}

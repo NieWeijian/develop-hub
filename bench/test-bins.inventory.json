@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "tools": [
+    {
+      "tool_id": "uvc_host_ctl",
+      "path": "/opt/rmsl_test/bin/uvc_host_ctl",
+      "sha256": "6526da0bb210ec701ac769904bc4793c6b5f5110ad51bfb32c177a17081e9563",
+      "adapter_status": "pending",
+      "execution_enabled": false
+    },
+    {
+      "tool_id": "uvc_host_ft",
+      "path": "/opt/rmsl_test/bin/uvc_host_ft",
+      "sha256": "edb2ae181018aee2b84ad89bed304570884db3363cca6f922e14cb97399efd16",
+      "adapter_status": "pending",
+      "execution_enabled": false
+    },
+    {
+      "tool_id": "uvc_host_imu",
+      "path": "/opt/rmsl_test/bin/uvc_host_imu",
+      "sha256": "1a681b8b63d86f0913424a88de43cba5685e976de7179620f44a40ab5342ecb9",
+      "adapter_status": "pending",
+      "execution_enabled": false
+    },
+    {
+      "tool_id": "uvc_host_isp_cli",
+      "path": "/opt/rmsl_test/bin/uvc_host_isp_cli",
+      "sha256": "268e2d7abbd00de8482e182b5c24d996a0e1bb419718414205a212a76084796c",
+      "adapter_status": "pending",
+      "execution_enabled": false
+    },
+    {
+      "tool_id": "uvc_host_isp_test",
+      "path": "/opt/rmsl_test/bin/uvc_host_isp_test",
+      "sha256": "d42116658ba6e0f2ec8315e3853f0a6c084e8bc3c8226f9d83325e83a64b6396",
+      "adapter_status": "pending",
+      "execution_enabled": false
+    },
+    {
+      "tool_id": "uvc_host_multisync",
+      "path": "/opt/rmsl_test/bin/uvc_host_multisync",
+      "sha256": "19cfbd76a74ff238d4a1e8ab0c52c0e12bf6e93fe70a17cc96348157591c6d6f",
+      "adapter_status": "pending",
+      "execution_enabled": false
+    },
+    {
+      "tool_id": "uvc_host_ota",
+      "path": "/opt/rmsl_test/bin/uvc_host_ota",
+      "sha256": "232aba41b850c5ad7f609dd9a6a423ad9628ea0c51ebd6b7eb98e9f304538676",
+      "adapter_status": "pending",
+      "execution_enabled": false
+    },
+    {
+      "tool_id": "uvc_host_preview",
+      "path": "/opt/rmsl_test/bin/uvc_host_preview",
+      "sha256": "de166156815f4b38bc5c8f681ac6908982a7ba403cb7093f968c8f4c0650e1cc",
+      "adapter_status": "pending",
+      "execution_enabled": false
+    },
+    {
+      "tool_id": "uvc_host_stream",
+      "path": "/opt/rmsl_test/bin/uvc_host_stream",
+      "sha256": "ec3fbd8713219249324fa3955e17e69e26d432d2de61db34437b064f2ab6c3da",
+      "adapter_status": "pending",
+      "execution_enabled": false
+    }
+  ]
+}

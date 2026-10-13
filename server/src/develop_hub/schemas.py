@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, computed_field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, computed_field, model_validator
 
 from .models import (
     ApprovalStatus,
@@ -515,16 +515,21 @@ class TestBenchView(TestBenchCreate):
 
 class TestRoundCreate(BaseModel):
     developer_mode: bool = False
-    allow_wear_limit_override: bool = False
     execute_test_cases: bool = False
     flash_firmware: bool = False
     device_serial: str = Field(default="", max_length=64, pattern=r"^[A-Za-z0-9_-]*$")
     product_id: str
     test_point_id: str | None = None
     bench_id: str
-    test_case_ids: list[str] = Field(min_length=1)
+    test_case_ids: list[str] = Field(default_factory=list)
     test_case_parameters: dict[str, dict[str, Any]] = Field(default_factory=dict)
     auto_start: bool = True
+
+    @model_validator(mode="after")
+    def require_executable_cases(self) -> TestRoundCreate:
+        if self.execute_test_cases and not self.test_case_ids:
+            raise ValueError("Select at least one Test Case when execution is enabled")
+        return self
 
 
 class TestRoundEventView(BaseModel):

@@ -155,18 +155,22 @@ def round_progress(round_id: str, artifact_root: Path, chunk: str, command: str)
         db.commit()
 
 
-async def run_command(command: list[str], cwd: Path, timeout: int, input_text: str | None = None) -> dict[str, Any]:
+async def run_command(command: list[str], cwd: Path, timeout: int, input_text: str | None = None, *, capture_stdout: bool = False) -> dict[str, Any]:
     process = await asyncio.create_subprocess_exec(
         *command, cwd=cwd, start_new_session=True,
         stdin=asyncio.subprocess.PIPE if input_text is not None else asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     tails = {'stdout': '', 'stderr': ''}
+    # Structured responses must never be parsed from a diagnostic log tail.
+    stdout_chunks: list[str] = []
+    stdout_bytes = 0
+    stdout_limit = 8 * 1024 * 1024
     line_count = 0
     pending: list[str] = []
     sink = _command_progress.get()
     async def read(stream, name):
-        nonlocal line_count
+        nonlocal line_count, stdout_bytes
         decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         while True:
             data = await stream.read(4096)
@@ -174,6 +178,10 @@ async def run_command(command: list[str], cwd: Path, timeout: int, input_text: s
             tails[name] = (tails[name] + text)[-12000:]
             if name == 'stdout':
                 line_count += text.count('\n')
+                if capture_stdout:
+                    stdout_bytes += len(data)
+                    if stdout_bytes <= stdout_limit:
+                        stdout_chunks.append(text)
             if sink and text:
                 pending.append(text)
             if not data:
@@ -204,7 +212,10 @@ async def run_command(command: list[str], cwd: Path, timeout: int, input_text: s
         await asyncio.gather(reporter, *readers, return_exceptions=True)
         if sink:
             sink(''.join(pending), shlex.join(command))
+    if capture_stdout and stdout_bytes > stdout_limit:
+        raise TestWorkbenchError(f'Structured stdout exceeds {stdout_limit} bytes; result was not parsed')
     return {'command': shlex.join(command), 'cwd': str(cwd), 'exit_code': process.returncode,
+            **({'stdout': ''.join(stdout_chunks)} if capture_stdout else {}),
             'stdout_tail': tails['stdout'], 'stdout_line_count': line_count, 'stderr_tail': tails['stderr']}
 
 
@@ -690,9 +701,9 @@ class TestRoundWorkflow:
                         return
                     bench = TestBench(**current.bench_snapshot)
                     path = current.remote_path
-                response = await self._remote(bench, 'cat -- ' + shlex.quote(path + '/result.json'), 20)
+                response = await self._remote(bench, 'cat -- ' + shlex.quote(path + '/result.json'), 20, capture_stdout=True)
                 if response['exit_code'] == 0:
-                    report = json.loads(response['stdout_tail'])
+                    report = json.loads(response['stdout'])
                     with SessionLocal() as db:
                         current = db.get(TestRound, round_id)
                         expected = f'TEST-{current.display_number:06d}'
@@ -702,16 +713,11 @@ class TestRoundWorkflow:
                         previous = current.controller_result or {}
                         if report.get('revision',0) < previous.get('revision',0):
                             raise TestWorkbenchError('Controller result revision regressed')
-                        current.controller_result = {**report, 'received_at': now().isoformat()}
+                        current.controller_result = {**report, 'received_at': now().isoformat(), 'sync_status': 'ok'}
+                        should_archive = False
                         if report.get('state') in {'finished','rejected','interrupted'}:
                             preflight_blocked = report.get('phase') == 'validating' and report.get('outcome') != 'passed' and 'flash_exit_code' not in report and all(c.get('state') == 'blocked' for c in report.get('cases', []))
-                            if not preflight_blocked and any(c.get('code','').startswith('SWITCH-') for c in current.test_case_snapshot):
-                                from .evidence_store import archive
-                                try:
-                                    await archive(self,bench,path,current.display_number)
-                                    current.controller_result={**current.controller_result,'evidence_archived':True}
-                                except Exception as exc:
-                                    current.controller_result={**current.controller_result,'evidence_archived':False,'evidence_archive_error':str(exc)}
+                            should_archive = not preflight_blocked and any(c.get('code','').startswith('SWITCH-') for c in current.test_case_snapshot)
                             passed = report.get('state')=='finished' and report.get('outcome')=='passed' and report.get('phase') in {'flash_complete','tests_complete'} and report.get('flash_exit_code')==0
                             if current.product_snapshot.get('execute_test_cases'):
                                 from .basic_cases import report_passed
@@ -728,6 +734,15 @@ class TestRoundWorkflow:
                         elif previous.get('phase') != report.get('phase'):
                             self._event(db,current,'bench_'+report.get('phase','unknown'),'running',report.get('message','Bench running'))
                         db.commit()
+                        # Final verdicts must be visible even while evidence transfer is slow.
+                        if should_archive:
+                            from .evidence_store import archive
+                            try:
+                                await archive(self,bench,path,current.display_number)
+                                current.controller_result={**current.controller_result,'evidence_archived':True}
+                            except Exception as exc:
+                                current.controller_result={**current.controller_result,'evidence_archived':False,'evidence_archive_error':str(exc)}
+                            db.commit()
                 else:
                     raise TestWorkbenchError('等待 Controller 状态文件或 SSH 连接恢复')
             except asyncio.CancelledError:
@@ -736,7 +751,7 @@ class TestRoundWorkflow:
                 with SessionLocal() as db:
                     current = db.get(TestRound, round_id)
                     if current:
-                        current.controller_result = {**(current.controller_result or {}), 'transport_error': str(exc), 'checked_at': now().isoformat()}
+                        current.controller_result = {**(current.controller_result or {}), 'sync_status': 'error', 'transport_error': str(exc), 'checked_at': now().isoformat()}
                         db.commit()
             await asyncio.sleep(2)
 
@@ -764,13 +779,17 @@ class TestRoundWorkflow:
                 raise TestWorkbenchError("This Test Round already has an active task")
             with SessionLocal() as db:
                 from .testing_platform import bench_busy
+                from .bench_reservation import bench_guard
                 requested = db.get(TestRound, round_id)
-                if requested and bench_busy(db, requested.bench_id, round_id):
-                    raise TestWorkbenchError('测试台正在执行其他轮次，请等待完成后启动')
-                claimed = db.execute(update(TestRound).where(TestRound.id == round_id, TestRound.status == TestRoundStatus.CREATED).values(status=TestRoundStatus.CHECKING_OUT, started_at=now()))
-                if claimed.rowcount != 1:
-                    raise TestWorkbenchError('Only a newly created Test Round may start; create a new round to retry')
-                db.commit()
+                if requested is None:
+                    raise TestWorkbenchError('Test Round not found')
+                with bench_guard(requested.bench_id):
+                    if bench_busy(db, requested.bench_id, round_id):
+                        raise TestWorkbenchError('测试台正在执行其他轮次或等待人工场景操作，请等待完成后启动')
+                    claimed = db.execute(update(TestRound).where(TestRound.id == round_id, TestRound.status == TestRoundStatus.CREATED).values(status=TestRoundStatus.CHECKING_OUT, started_at=now()))
+                    if claimed.rowcount != 1:
+                        raise TestWorkbenchError('Only a newly created Test Round may start; create a new round to retry')
+                    db.commit()
             with SessionLocal() as db:
                 quick = db.get(TestRound, round_id).product_snapshot.get("developer_mode")
                 release = db.get(TestRound, round_id).origin == 'release'
@@ -1085,7 +1104,9 @@ class TestRoundWorkflow:
                 "board_config": test_round.board_config,
             },
             "source": {
-                "type": "gerrit",
+                "type": test_round.product_snapshot.get("firmware_source", {}).get("kind", "gerrit"),
+                "identity": test_round.product_snapshot.get("firmware_identity", {"kind": "commit", "value": test_round.commit_sha}),
+                "provenance": test_round.product_snapshot.get("firmware_source", {}),
                 "project": test_round.gerrit_project,
                 "change": test_round.change_number,
                 "patchset": test_round.patchset_number,
@@ -1107,10 +1128,10 @@ class TestRoundWorkflow:
             "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=yes",
         ]
 
-    async def _remote(self, bench: TestBench, command: str, timeout: int = 120) -> dict[str, Any]:
+    async def _remote(self, bench: TestBench, command: str, timeout: int = 120, *, capture_stdout: bool = False) -> dict[str, Any]:
         return await run_command(
             ["ssh", *self._ssh_base(bench), f"{bench.user}@{bench.host}", command],
-            Path.cwd(), timeout,
+            Path.cwd(), timeout, **({'capture_stdout': True} if capture_stdout else {}),
         )
 
     async def _transfer(

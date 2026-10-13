@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "plan", "risks", "acceptance_check", "blockers"],
+  "properties": {
+    "status": {"type": "string", "enum": ["ready", "blocked"]},
+    "summary": {"type": "string"},
+    "plan": {"type": "array", "items": {"type": "string"}},
+    "risks": {"type": "array", "items": {"type": "string"}},
+    "acceptance_check": {"type": "array", "items": {"type": "string"}},
+    "blockers": {"type": "array", "items": {"type": "string"}}
+  }
+}

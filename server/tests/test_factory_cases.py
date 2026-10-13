@@ -1,10 +1,13 @@
 import gzip
+import random
+import subprocess
 import re
 import sys
 from pathlib import Path
 import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'bench'))
 from factory_runtime import FactoryCase, CALIB, listing, restorable_board
+from test_runtime import Case
 from develop_hub.basic_cases import definition, ROOT
 
 
@@ -85,10 +88,103 @@ def test_invalid_nonempty_board_sn_still_blocks(factory):
     assert not any(command.startswith('set-') for _,command,_ in case.calls)
 
 
-def test_archive_over_limit_is_blocked(factory):
-    case=factory('FILE-ARCHIVE-LOG');case.remote['/userdata/log/archived/001.log.gz']=b'x'*60001
-    assert case.run()==1 and case.result['outcome']=='blocked'
-    assert not any(command=='file-get' for _,command,_ in case.calls)
+@pytest.mark.parametrize('code', ['FILE-MODULE-LOG', 'FILE-ARCHIVE-LOG'])
+@pytest.mark.parametrize('size', [60001, 1024 * 1024 + 1])
+def test_large_logs_are_downloaded_and_validated(factory, code, size):
+    case = factory(code)
+    contents = random.Random(24).randbytes(size)
+    archived = code == 'FILE-ARCHIVE-LOG'
+    payload = gzip.compress(contents, mtime=0) if archived else contents
+    remote = '/userdata/log/archived/001.log.gz' if archived else '/userdata/log/lasted.log'
+    case.remote[remote] = payload
+    assert len(payload) >= size
+    assert case.run() == 0, case.result
+    downloads = [args for _, command, args in case.calls if command == 'file-get']
+    assert len(downloads) == 1 and downloads[0][0] == remote
+    actual = Path(downloads[0][1])
+    assert actual.read_bytes() == payload
+    artifact = next(item for item in case.result['files'] if item['path'] == str(actual.relative_to(case.out)))
+    assert artifact['size_bytes'] == len(payload)
+    if archived:
+        assert any(item['name'].endswith('complete length') and item['passed'] for item in case.result['assertions'])
+        assert any(item['name'].endswith('gzip integrity') and item['passed'] for item in case.result['assertions'])
+
+
+def test_file_get_rejection_preserves_actual_command_result(factory, monkeypatch):
+    case = factory('FILE-MODULE-LOG')
+    case.remote['/userdata/log/lasted.log'] = b'x' * 60001
+    case.data['video'] = '/dev/fixture'
+    original_call = case.call
+    def call(step, command, *args):
+        if command == 'file-get':
+            return Case.call(case, step, command, *args)
+        return original_call(step, command, *args)
+    monkeypatch.setattr(case, 'call', call)
+    calls = []
+    def refused(command, **kwargs):
+        calls.append(command)
+        assert command[3] == 'file-get'
+        Path(kwargs['env']['RMSL_XU_TRACE']).write_text('{"fixture":"firmware-rejected"}\n')
+        return subprocess.CompletedProcess(command, 9, b'file-get received rejection\n', b'firmware read failed\n')
+    monkeypatch.setattr('test_runtime.subprocess.run', refused)
+    assert case.run() == 1
+    assert case.result['outcome'] == 'error'
+    assert len(calls) == 1
+    step = case.result['steps'][-1]
+    assert step['id'] == 'download-log-0' and step['exit_code'] == 9
+    assert step['command'] == calls[0]
+    assert 'received rejection' in step['stdout']
+    assert 'firmware read failed' in step['stderr']
+    assert 'received rejection' in (case.out / 'stdout.log').read_text()
+    assert 'firmware read failed' in (case.out / 'stderr.log').read_text()
+    assert 'firmware-rejected' in (case.out / 'protocol.jsonl').read_text()
+
+
+def test_truncated_archive_fails_complete_length_check(factory, monkeypatch):
+    case = factory('FILE-ARCHIVE-LOG')
+    case.remote['/userdata/log/archived/001.log.gz'] = gzip.compress(random.Random(24).randbytes(70000), mtime=0)
+    original_call = case.call
+    def call(step, command, *args):
+        output = original_call(step, command, *args)
+        if command == 'file-get':
+            target = Path(args[1])
+            target.write_bytes(target.read_bytes()[:-8])
+        return output
+    monkeypatch.setattr(case, 'call', call)
+    assert case.run() == 1 and case.result['outcome'] == 'failed'
+    assert any(item['name'].endswith('complete length') and not item['passed'] for item in case.result['assertions'])
+
+
+def test_archive_crc_failure_does_not_pass(factory):
+    case = factory('FILE-ARCHIVE-LOG')
+    payload = bytearray(gzip.compress(random.Random(24).randbytes(70000), mtime=0))
+    payload[-8] ^= 1
+    case.remote['/userdata/log/archived/001.log.gz'] = bytes(payload)
+    assert case.run() == 1 and case.result['outcome'] == 'error'
+    assert any(item['name'].endswith('complete length') and item['passed'] for item in case.result['assertions'])
+    assert 'CRC' in case.result['message']
+
+
+@pytest.mark.parametrize('delta', [-1000, 1000])
+def test_active_log_change_during_download_does_not_require_old_listing_length(factory, monkeypatch, delta):
+    case = factory('FILE-MODULE-LOG')
+    case.remote['/userdata/log/lasted.log'] = b'x' * 70000
+    original_call = case.call
+    def call(step, command, *args):
+        if command == 'file-get':
+            case.remote[args[0]] = b'x' * (70000 + delta)
+        return original_call(step, command, *args)
+    monkeypatch.setattr(case, 'call', call)
+    assert case.run() == 0, case.result
+    assert (case.out / 'artifacts/lasted.log').stat().st_size == 70000 + delta
+
+
+def test_absent_archive_still_blocks_without_downloading(factory):
+    case = factory('FILE-ARCHIVE-LOG')
+    del case.remote['/userdata/log/archived/001.log.gz']
+    assert case.run() == 1 and case.result['outcome'] == 'blocked'
+    assert case.result['message'] == 'No archived logs available'
+    assert not any(command == 'file-get' for _, command, _ in case.calls)
 
 
 def test_corrupt_archive_does_not_pass(factory):

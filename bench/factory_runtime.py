@@ -13,7 +13,6 @@ from worker import atomic, digest, timestamp
 
 ROOT = Path(__file__).resolve().parent
 CALIB = '/calibration/calib_data/calib_param_1280x1080.yaml'
-MAX_FILE = 60000
 
 
 class Blocked(RuntimeError): pass
@@ -99,8 +98,7 @@ class FactoryCase(Case):
         entries = listing(self.call('list-logs', 'file-list', directory))
         names = sorted(n for n, item in entries.items() if not item['directory'] and (n.endswith('.gz') if archived else n == 'lasted.log'))
         if not names: raise Blocked('No archived logs available' if archived else 'No active module log available')
-        oversized = [n for n in names if entries[n]['size'] > MAX_FILE]
-        if oversized: raise Blocked('Firmware file-get supports at most 60000 bytes; ranged download required: ' + ', '.join(oversized))
+        # Attempt the transfer; firmware responses determine download support.
         for index, name in enumerate(names):
             path = self.download('download-log-' + str(index), directory + '/' + name, name)
             self.check(name + ' not empty', '>0 bytes', path.stat().st_size, path.stat().st_size > 0)

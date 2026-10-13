@@ -1,7 +1,7 @@
 {
-  "version": "0.4.0",
+  "version": "0.5.0",
   "source_commit": "4cfb935",
-  "reviewed_at": "2026-09-29",
+  "reviewed_at": "2026-10-08",
   "status": "design",
   "scenarios": [
     {
@@ -236,55 +236,55 @@
         {
           "code": "SPECIAL-SN-POWER-CYCLE",
           "name": "手动断电后 SN 持久化",
-          "capability": "占位 · 待定义",
-          "tool": "待明确",
-          "matrix": "待明确",
-          "assertion": "仅保留用例位置；测试步骤、参数、判定标准及恢复方式后续单独定义。",
-          "source": "用户确认的特殊场景清单，2026-09-29"
+          "capability": "已接入人工门控 1.0.0",
+          "tool": "get-sn / set-sn / USB 身份核验",
+          "matrix": "人工立即断电与重连；锁定 CPU serial 和 USB 端口；测试 SN 保留",
+          "assertion": "读取原信息 → 写入指定 SN → 人工拔线并验证掉线 → 重连同一模组并自动比对 SN；保留操作者与时间证据。",
+          "source": "server/src/develop_hub/special_definitions.py / bench/special_runtime.py"
         },
         {
           "code": "SPECIAL-LOG-FULL",
           "name": "日志区占满异常检查",
-          "capability": "占位 · 待定义",
-          "tool": "待明确",
-          "matrix": "待明确",
-          "assertion": "仅保留用例位置；测试步骤、参数、判定标准及恢复方式后续单独定义。",
-          "source": "用户确认的特殊场景清单，2026-09-29"
+          "capability": "已接入人工门控 1.0.0",
+          "tool": "file-put / file-list / 模组健康检查",
+          "matrix": "累计传输默认 24 MiB（可选 21–64 MiB）；受控日志文件；逐步确认",
+          "assertion": "记录成功传输字节数、目录变化和健康状态；累计 >20 MiB 不等于实际满盘，缺少 rolling/边界证据则阻塞，不判通过。",
+          "source": "server/src/develop_hub/special_definitions.py / bench/special_runtime.py"
         },
         {
           "code": "SPECIAL-RGB-IMU-ALIGN",
           "name": "RGB 与 IMU 对齐",
-          "capability": "占位 · 待定义",
-          "tool": "待明确",
-          "matrix": "待明确",
-          "assertion": "仅保留用例位置；测试步骤、参数、判定标准及恢复方式后续单独定义。",
+          "capability": "待接入 · 后续阶段",
+          "tool": "3588 采集 / Windows WSL ROS / Kalibr",
+          "matrix": "本阶段不执行",
+          "assertion": "后续接入跨平台采集、ROS 转包及 Kalibr 结果回填；当前无执行结果。",
           "source": "用户确认的特殊场景清单，2026-09-29"
         },
         {
           "code": "FACTORY-AGING",
           "name": "老化测试",
-          "capability": "占位 · 待定义",
-          "tool": "待明确",
-          "matrix": "待明确",
-          "assertion": "仅保留用例位置；测试步骤、参数、判定标准及恢复方式后续单独定义。",
-          "source": "用户确认的特殊场景清单，2026-09-29"
+          "capability": "已接入人工门控 1.0.0",
+          "tool": "3588 USB 串口采集 / 人工原始日志",
+          "matrix": "FTDI / CP210x 等 USB 串口；先启动采集再给老化座上电；人工采集兜底",
+          "assertion": "人工确认接线与时长/温度阈值；保存本轮开始、遥测、结束与异常证据。串口与人工证据明确区分，证据不足不判通过。",
+          "source": "server/src/develop_hub/special_definitions.py / bench/special_runtime.py"
         },
         {
           "code": "SPECIAL-OTA",
           "name": "OTA 测试",
-          "capability": "占位 · 待定义",
-          "tool": "待明确",
-          "matrix": "待明确",
-          "assertion": "仅保留用例位置；测试步骤、参数、判定标准及恢复方式后续单独定义。",
-          "source": "用户确认的特殊场景清单，2026-09-29"
+          "capability": "已接入人工门控 1.0.0",
+          "tool": "测试包副本与摘要校验 / 人工 OTA 注入 / 身份与健康回检",
+          "matrix": "每轮一种：损坏包、错误包名、升级中断电；原始 OTA 日志留档",
+          "assertion": "校验源包 → 准备独立测试副本 → 人工执行异常注入 → 恢复供电 → 验证异常证据、同模组身份与健康；无有效异常证据不判通过。",
+          "source": "server/src/develop_hub/special_definitions.py / bench/special_runtime.py"
         },
         {
           "code": "SYNC-MULTI",
           "name": "多模组同步",
-          "capability": "占位 · 待定义",
-          "tool": "待明确",
-          "matrix": "待明确",
-          "assertion": "仅保留用例位置；测试步骤、参数、判定标准及恢复方式后续单独定义。",
+          "capability": "待接入 · 后续阶段",
+          "tool": "待确认硬同步工具",
+          "matrix": "多模组同接 3588，硬同步线主从识别",
+          "assertion": "后续接入主从识别与同步出流验证；当前无执行结果。",
           "source": "用户确认的特殊场景清单，2026-09-29"
         }
       ]

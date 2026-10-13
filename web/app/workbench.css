@@ -1,0 +1,56 @@
+/* Task-oriented workbench shell. Technical evidence remains in expandable panels. */
+.wb-workspace .wb-main-nav button {font-size:14px;padding:11px 18px}
+.wb-settings-nav {display:flex;gap:8px;flex-wrap:wrap;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.wb-settings-nav button {background:transparent;border:0;padding:8px 14px;color:var(--muted)}
+.wb-settings-nav button[aria-current=page] {background:var(--green-soft);color:var(--green);font-weight:700}
+.wb-workspace .tw-heading h2 {font-family:inherit;font-size:26px}
+.wb-workspace .tw-heading p {font-size:14px;margin-top:8px}
+.wb-workspace .wb-start-product {display:flex;align-items:end;justify-content:space-between;gap:20px}
+.wb-start-product>label {width:min(420px,100%)}
+.wb-start-product>div {display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.wb-start-modes {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:20px}
+.wb-workspace .wb-mode-card {text-align:left;display:flex;flex-direction:column;align-items:start;gap:8px;padding:28px;min-height:230px;cursor:pointer;border:1px solid var(--line);background:var(--card)}
+.wb-mode-card h3 {font-size:24px;margin:8px 0}
+.wb-mode-card p {margin:0;font-size:15px}
+.wb-mode-card>strong {margin-top:auto;padding-top:20px;color:var(--green)}
+.wb-mode-card:hover:not(:disabled) {border-color:var(--green);background:#f8fbf8}
+.wb-mode-card:disabled {opacity:.55;cursor:not-allowed}
+.wb-workspace .wb-delivery-shortcut {display:flex;align-items:center;justify-content:space-between;gap:20px;background:#f7f9f7}
+.wb-delivery-shortcut p {margin:6px 0 0}
+.wb-history-filters {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:15px}
+.wb-device-toolbar {display:flex;align-items:center;justify-content:space-between;gap:14px}
+.wb-device-toolbar p {overflow-wrap:anywhere}
+.wb-case-toolbar {display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin:16px 0 22px}
+.wb-case-toolbar>label {flex:1;min-width:200px}
+.wb-case-group {border:1px solid var(--line);border-radius:10px;padding:18px;margin:22px 0;min-width:0}
+.wb-case-group>legend {font-weight:700;padding:0 8px;color:var(--ink)}
+.wb-case-group-actions {display:flex;justify-content:end}
+.wb-case-option {padding:16px 0;border-bottom:1px solid var(--line)}
+.wb-case-option:last-child {border:0;padding-bottom:0}
+.wb-workspace .wb-checkbox-row {display:flex;flex-direction:row;align-items:start;gap:12px}
+.wb-checkbox-row input[type=checkbox] {width:18px;height:18px;flex:0 0 18px;margin:3px 0 0;accent-color:var(--green)}
+.wb-case-description {margin:8px 0 0 30px;font-size:13px;color:var(--muted)}
+.wb-case-description p {font-size:14px}
+.wb-workspace .wb-launch {display:flex;gap:20px;justify-content:space-between;align-items:center;border-color:#91ab9a;background:#f5f9f5}
+.wb-launch>button {flex-shrink:0}
+.wb-launch p {margin:8px 0}
+.wb-launch ol {padding-left:22px;color:var(--muted);line-height:1.8}
+.wb-workspace .wb-readiness {padding:12px 16px;background:#f7f9f7;border:1px solid var(--line);border-radius:8px;margin:16px 0}
+.wb-readiness p {margin:5px 0 12px}
+.wb-readiness>button {margin-top:10px}
+.wb-workspace summary {cursor:pointer;line-height:1.6}
+.wb-pending-scenarios {margin-top:24px}
+.wb-pending-scenarios>summary {cursor:pointer;font-weight:600}
+.wb-pending-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:16px}
+.wb-pending-grid>article {border:1px solid var(--line);border-radius:10px;padding:18px;min-width:0}
+.wb-pending-grid h4 {margin:0 0 8px}
+.wb-workspace button:focus-visible,.wb-workspace input:focus-visible,.wb-workspace select:focus-visible,.wb-workspace summary:focus-visible {outline:2px solid var(--green);outline-offset:3px}
+.wb-workspace form>.panel {margin-top:18px}
+@media(max-width:760px) {
+ .wb-start-modes,.wb-history-filters {grid-template-columns:1fr}
+ .wb-workspace .wb-start-product,.wb-workspace .wb-delivery-shortcut,.wb-workspace .wb-launch {align-items:stretch;flex-direction:column}
+ .wb-start-product>label {width:100%}
+ .wb-workspace .wb-mode-card {min-height:200px}
+ .wb-workspace .wb-main-nav button {padding:10px 12px;font-size:13px}
+ .wb-device-toolbar {align-items:start}
+}

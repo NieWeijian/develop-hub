@@ -4,6 +4,10 @@
 
 import scenarioCatalog from './scenario-catalog.json';
 import PlatformWorkbench from './platform-workbench';
+import CurrentFirmwareGates from './current-firmware-gates';
+import SpecialScenarios, { type Definition as SpecialDefinition, type Run as SpecialRun } from './special-scenarios';
+import { CaseSelection, caseGroup } from './workbench-controls';
+import './workbench.css';
 
 import { FormEvent, useCallback, useEffect, useState, useRef } from 'react';
 
@@ -119,9 +123,22 @@ type TestRound = {
   product: Product; test_point: TestPoint | null; bench: TestBench; events: RoundEvent[];
 };
 
-type View = 'products' | 'rounds' | 'cases' | 'benches' | 'releases' | 'schedules';
+type View = 'start' | 'special' | 'products' | 'rounds' | 'cases' | 'benches' | 'releases' | 'schedules';
 type Screen = View | 'product-detail' | 'product-wizard' | 'round-wizard' | 'round-detail';
-type Dialog = 'case' | 'point' | 'bench';
+type Dialog = 'point' | 'bench';
+type TestMode = 'quick' | 'full' | 'delivery';
+const modeLabels: Record<TestMode, string> = {quick:'测试当前固件', full:'编译烧录测试', delivery:'仅构建交付'};
+const originLabels: Record<string,string> = {quick:'当前固件测试',manual:'手动测试',scheduled:'定时回归',release:'发布验证'};
+const activeStatuses = ['created','checking_out','building','packaging','transferring','verifying','bench_running'];
+type FirmwareSource = {kind?:string;image_directory?:string;operator?:string;imported_at?:string;validation?:{passed:boolean;checked_at?:string}};
+function firmwareSource(round:TestRound) {return (round.product_snapshot.firmware_source||{}) as FirmwareSource;}
+function firmwareIdentity(round:TestRound) {return (round.product_snapshot.firmware_identity||{}) as {kind?:string;value?:string};}
+function isPrebuiltRound(round:TestRound) {return firmwareSource(round).kind==='prebuilt';}
+function roundSource(round: TestRound) {
+  if(isPrebuiltRound(round))return '已有镜像 · '+(firmwareIdentity(round).value||String(round.product_snapshot.candidate_name||'175 本地产物'));
+  const subject = String((round.product_snapshot.test_point as {subject?:string}|undefined)?.subject || '');
+  return subject || (round.change_number ? `${round.change_number} / PS${round.patchset_number}` : round.commit_sha?.slice(0,12) || '当前模组固件');
+}
 
 const productStatus: Record<Product['status'], string> = {
   draft: '待验证', verifying: '验证中', ready: '基线可用', invalid: '基线无效',
@@ -160,7 +177,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       });
       throw new Error(messages.join('；') || `请求失败 (${response.status})`);
     }
-    if (detail && typeof detail === 'object') throw new Error(JSON.stringify(detail));
+    if (detail && typeof detail === 'object') throw new Error('message' in detail && typeof detail.message === 'string' ? detail.message : JSON.stringify(detail));
     throw new Error(typeof detail === 'string' && detail ? detail : `请求失败 (${response.status})`);
   }
   return response.json() as Promise<T>;
@@ -249,41 +266,55 @@ function BasicEvidence({round,code}:{round:TestRound;code:string}) {
 
 
 type CaseOutcome = {id:string; code?:string; state?:string; outcome?:string; assertions_passed?:number; assertions_total?:number; recovery?:{state?:string}};
-const outcomeLabels: Record<string,string> = {passed:'通过',failed:'不通过',error:'执行异常',blocked:'阻塞',skipped:'跳过',running:'执行中',pending:'未测',interrupted:'已中断'};
+const outcomeLabels: Record<string,string> = {passed:'通过',failed:'不通过',error:'执行异常',blocked:'阻塞',skipped:'跳过',running:'执行中',pending:'未测',interrupted:'已中断',sync_error:'状态待同步'};
+function roundSyncError(round:TestRound) {
+  return round.status==='bench_running' && Boolean(round.controller_result?.sync_status==='error' || round.controller_result?.transport_error);
+}
+function roundLabel(round:TestRound) {
+  return roundSyncError(round) ? '结果同步异常' : roundStatus[round.status] || round.status;
+}
 function resultState(result?:CaseOutcome) {
   return result?.outcome || (result?.state === 'finished' ? 'error' : result?.state === 'running' ? 'running' : ['blocked','skipped','interrupted'].includes(result?.state || '') ? result!.state! : 'pending');
 }
 function commitComment(round:TestRound) {
+  if(isPrebuiltRound(round))return firmwareIdentity(round).value||'已保存镜像指纹';
   const frozen = round.product_snapshot.test_point as {subject?:string} | undefined;
   return frozen?.subject || (round.test_point?.commit_sha === round.commit_sha ? round.test_point.subject : '') || '历史记录未保存提交说明';
 }
 function RoundResults({round,onEvidence,onChanged}:{round:TestRound;onEvidence:(code:string)=>void;onChanged:()=>Promise<void>}) {
   const [filter,setFilter] = useState('all');
   const [editing,setEditing] = useState<string|null>(null);
-  const stateOf = (result:CaseOutcome|undefined, plan:Record<string,unknown>) => round.case_classifications?.[String(plan.code)]?.outcome || resultState(result);
+  const syncError = roundSyncError(round);
+  const stateOf = (result:CaseOutcome|undefined, plan:Record<string,unknown>) => {
+    const state = round.case_classifications?.[String(plan.code)]?.outcome || resultState(result);
+    return syncError && ['running','pending'].includes(state) ? 'sync_error' : state;
+  };
   const results = (round.controller_result?.cases || []) as CaseOutcome[];
   const rows = round.test_case_snapshot.map(plan => ({plan, result:results.find(r=>r.id===plan.id || (!!r.code && r.code===plan.code))}));
   const count = (state:string) => rows.filter(row=>stateOf(row.result,row.plan)===state).length;
   const passed=count('passed'), failed=count('failed'), errors=count('error');
   const pending=rows.length-passed-failed-errors;
-  const visible=rows.filter(row=>filter==='all' || (filter==='attention' ? ['failed','error','blocked','interrupted'].includes(stateOf(row.result,row.plan)) : filter==='unfinished' ? !['passed','failed','error'].includes(stateOf(row.result,row.plan)) : stateOf(row.result,row.plan)===filter));
+  const visible=rows.filter(row=>filter==='all' || (filter==='attention' ? ['failed','error','blocked','interrupted','sync_error'].includes(stateOf(row.result,row.plan)) : filter==='unfinished' ? !['passed','failed','error'].includes(stateOf(row.result,row.plan)) : stateOf(row.result,row.plan)===filter));
+  const hasManual = Object.values(round.case_classifications || {}).some(item=>item.manual);
+  const isRelease = round.origin === 'release';
   const milestones = [
-    [round.product_snapshot.developer_mode ? '编译与烧录（已跳过）' : '编译与镜像',round.product_snapshot.developer_mode ? 'skipped' : round.build_result?.passed === true ? 'passed' : round.build_result?.passed === false ? 'failed' : round.status==='building' ? 'running' : 'pending'],
+    [round.product_snapshot.developer_mode ? '使用当前固件' : isPrebuiltRound(round) ? '导入镜像校验' : isRelease ? '候选镜像' : '编译与镜像',round.product_snapshot.developer_mode ? 'skipped' : isPrebuiltRound(round) ? firmwareSource(round).validation?.passed===true?'passed':'pending' : round.build_result?.passed === true ? 'passed' : round.build_result?.passed === false ? 'failed' : round.status==='building' ? 'running' : 'pending'],
     ['测试台交付',round.delivery_result?.passed === true ? 'passed' : round.delivery_result?.passed === false ? 'failed' : round.status==='transferring' ? 'running' : 'pending'],
     [round.product_snapshot.developer_mode ? '当前固件身份确认' : '烧录后启动确认',(round.product_snapshot.developer_mode ? round.controller_result?.identity_verified : round.controller_result?.boot_verified) === true ? 'passed' : 'pending'],
-    ['用例执行',round.status==='test_complete' ? 'passed' : round.status==='test_failed' ? 'failed' : round.status==='blocked' ? 'blocked' : results.some(r=>r.state==='running') ? 'running' : 'pending'],
+    ['用例执行',syncError ? 'sync_error' : round.status==='test_complete' ? 'passed' : round.status==='test_failed' ? 'failed' : round.status==='blocked' ? 'blocked' : results.some(r=>r.state==='running') ? 'running' : 'pending'],
   ];
+  if (!round.product_snapshot.execute_test_cases) return null;
   return <section className="panel wb-results">
-    <header><div><span className="panel-label">TEST RESULTS</span><h3>用例结果</h3></div><span className={`wb-outcome result-${round.case_classification_verdict || 'pending'}`}>当前分类：{outcomeLabels[round.case_classification_verdict] || '未测'}</span></header>
-    <p>自动执行：{roundStatus[round.status] || round.status} · 当前分类包含人工修正</p><p className="wb-result-subtitle">{commitComment(round)} · {round.product_snapshot.developer_mode ? '开发者快速测试' : `${round.change_number}/PS${round.patchset_number}`} </p>
+    <header><div><span className="panel-label">TEST RESULTS</span><h3>用例结果</h3></div><span className={`wb-outcome result-${round.status==='test_complete'?'passed':round.status==='test_failed'?'failed':'pending'}`}>{roundLabel(round)}</span></header>
+    {hasManual && <p className="tw-warning">复核后分类：{outcomeLabels[round.case_classification_verdict] || '未测'}。以下统计包含人工修正，原始执行结论保留。</p>}<p className="wb-result-subtitle">{roundSource(round)}</p>
     <div className="wb-result-counts">{[['✓','通过',passed,'passed'],['×','不通过',failed,'failed'],['!','执行异常',errors,'error'],['○','未完成 / 跳过',pending,'pending']].map(([icon,label,value,state])=><div key={String(state)} className={`result-${state}`}><span><b aria-hidden="true">{icon}</b> {label}</span><strong>{value}</strong></div>)}</div>
-    <p>本轮计划 {rows.length} 项 · 有效判定 {passed+failed}/{rows.length} · 未测 {count('pending')} · 运行中 {count('running')} · 阻塞 {count('blocked')} · 跳过 {count('skipped')} · 中断 {count('interrupted')}</p>
+    <p>本轮计划 {rows.length} 项 · 有效判定 {passed+failed}/{rows.length} · 未测 {count('pending')} · 运行中 {count('running')}{syncError && ` · 状态待同步 ${count('sync_error')}`} · 阻塞 {count('blocked')} · 跳过 {count('skipped')} · 中断 {count('interrupted')}</p>
     {!round.product_snapshot.execute_test_cases && <p className="tw-warning">本轮未启用用例执行；交付或烧录成功不能作为测试通过。</p>}
     <nav className="wb-result-filters" aria-label="筛选用例结果">{[['all','全部'],['attention','失败 / 异常'],['unfinished','未完成 / 跳过'],['passed','通过']].map(([value,label])=><button type="button" key={value} aria-pressed={filter===value} onClick={()=>setFilter(value)}>{label}</button>)}</nav>
     <div className="wb-result-rows">{visible.map(({plan,result})=>{const state=stateOf(result,plan);const classification=round.case_classifications?.[String(plan.code)];return <article key={String(plan.id)}><span className={`wb-outcome result-${state}`}>{outcomeLabels[state] || state}</span><div><strong>{String(plan.name || plan.code)}</strong><small>{String(plan.code)}{result?.assertions_total!==undefined ? ` · 断言 ${result.assertions_passed ?? 0}/${result.assertions_total}` : ' · 尚无断言结果'}</small>{classification?.manual && <small>人工修正 · 自动结果：{outcomeLabels[classification.automatic_outcome || ''] || classification.automatic_outcome}</small>}{classification?.history.length ? <details><summary>修改记录 · {classification.history.length}</summary>{classification.history.map((h,i)=><p key={i}>{formatDate(h.changed_at)} · {h.operator} · {h.outcome ? outcomeLabels[h.outcome] : '恢复自动分类'}：{h.reason}</p>)}</details>:null}{result?.recovery?.state==='failed' && <small>恢复失败，请先处理设备状态</small>}</div><div className="wb-case-actions"><button type="button" disabled={!result?.code} onClick={()=>result?.code && onEvidence(result.code)}>查看证据 →</button>{classification?.executed && ['test_complete','test_failed','bench_failed','blocked'].includes(round.status) && <button type="button" onClick={()=>setEditing(String(plan.code))}>修改分类</button>}</div></article>;})}{!visible.length && <p>此筛选下没有用例。</p>}</div>
     {editing && <ClassificationEditor key={editing} round={round} code={editing} onClose={()=>setEditing(null)} onChanged={onChanged} />}
-    <h4>执行里程碑（自动执行记录）</h4><ol className="wb-milestones">{milestones.map(([name,state])=><li key={name} className={`result-${state}`}><span aria-hidden="true">{state==='passed'?'✓':state==='failed'?'×':state==='running'?'◷':'○'}</span><div><strong>{name}</strong><small>{state==='pending'?'待确认':outcomeLabels[state]}</small></div></li>)}</ol>
-    <small>里程碑来自服务端构建、交付和 Controller 证据；逐项测试结论以上方用例为准。</small>
+    <h4>执行进度</h4><ol className="wb-milestones">{milestones.map(([name,state])=><li key={name} className={`result-${state}`}><span aria-hidden="true">{state==='passed'?'✓':state==='failed'?'×':state==='running'?'◷':'○'}</span><div><strong>{name}</strong><small>{state==='pending'?'待确认':outcomeLabels[state]}</small></div></li>)}</ol>
+    <small>里程碑来自服务端镜像校验、交付和 Controller 证据；逐项测试结论以上方用例为准。</small>
   </section>;
 }
 
@@ -300,11 +331,16 @@ function ClassificationEditor({round,code,onClose,onChanged}:{round:TestRound;co
   return <form className="wb-classification-editor" onSubmit={save}><h4>{code} · 修改结果分类</h4><p>修改影响本轮用例的分类、统计和筛选；原始断言与自动执行记录保留。</p><label>分类<select name="outcome" defaultValue={current.outcome==='failed'?'failed':'passed'} disabled={busy}><option value="passed">通过</option><option value="failed">不通过</option><option value="">恢复自动结果</option></select></label><label>修改人（手工填写）<input name="operator" required maxLength={100} disabled={busy} /></label><label>修改原因<textarea name="reason" required maxLength={1000} disabled={busy} /></label>{error && <p role="alert">{error}</p>}<div className="wb-case-actions"><button disabled={busy} type="submit">{busy?'保存中…':'保存分类'}</button><button disabled={busy} type="button" onClick={onClose}>取消</button></div></form>;
 }
 
-function ScenarioCatalog() {
-  return <section className="panel wb-scenario-catalog"><header><div><span className="panel-label">COVERAGE PLAN</span><h3>场景覆盖目录</h3></div><span>{scenarioCatalog.scenarios.reduce((n,g)=>n+g.cases.length,0)} 项规划用例</span></header>
-    <p>按场景组织独立用例，再由分辨率、设备模式、参数与持续时间生成执行实例。此目录是扩充计划，不计入已执行结果；当前可执行用例见下方。</p>
-    <div className="wb-scenario-grid">{scenarioCatalog.scenarios.map(group=><details key={group.id}><summary><span aria-hidden="true">{group.icon}</span> {group.name}<small>{group.cases.length} 项</small></summary>{group.cases.map(item=><article key={item.code}><strong>{item.name}</strong><small>{item.code} · {item.capability}</small><p>{item.assertion}</p><small>遍历：{item.matrix}</small><small>工具：{item.tool}</small></article>)}</details>)}</div>
-  </section>;
+function PendingScenarios({implementedCodes}:{implementedCodes:Set<string>}) {
+  const pending=scenarioCatalog.scenarios.flatMap(group=>group.cases.filter(item=>!implementedCodes.has(item.code)));
+  if(!pending.length)return null;
+  return <details className="panel wb-pending-scenarios">
+    <summary>待接入场景 · {pending.length} 项</summary>
+    <p>这里只列出尚未接入执行的场景。</p>
+    <div className="wb-pending-grid">{pending.map(item=><article key={item.code}>
+      <h4>{item.name}</h4><small>{item.code}</small><p>{item.assertion}</p>
+    </article>)}</div>
+  </details>;
 }
 
 type PatchsetLookup = {
@@ -366,16 +402,16 @@ function BenchReadiness({benchId, full=true, onResult}:{benchId:string;full?:boo
       .catch(cause=>{if(!controller.signal.aborted)setError(String(cause));});
     return ()=>controller.abort();
   },[benchId,full,revision,onResult]);
-  return <div className="wb-readiness"><h4>测试台就绪检查</h4>
+  return <div className="wb-readiness">
     <p role="status">{error || (!result?'正在检查测试台…':result.passed?'测试台检查通过':'测试台未就绪，请处理以下问题后重新检查。')}</p>
-    {result && <><ul>{result.checks.map(check=><li key={check.name}>{check.passed?'✓':'✕'} {check.name}：{check.detail}</li>)}</ul><small>检查时间：{formatDate(result.checked_at)}</small></>}
-    <p>此检查只读取环境；RMSL321 完整验证提交时会再次检查，未通过不会开始编译。</p>
+    {result && <><details open={!result.passed}><summary>检查详情</summary><ul>{result.checks.map(check=><li key={check.name}>{check.passed?'✓':'✕'} {check.name}：{check.detail}</li>)}</ul><small>检查时间：{formatDate(result.checked_at)}</small></details></>}
+
     <button type="button" disabled={!result && !error} onClick={()=>{setResult(null);setError('');onResult?.(null);setRevision(value=>value+1);}}>重新检查测试台</button>
   </div>;
 }
 
 export default function QaWorkbench({ onManageRepositories }: { onManageRepositories: () => void }) {
-  const [screen, setScreen] = useState<Screen>('products');
+  const [screen, setScreen] = useState<Screen>('start');
   const [locationReady,setLocationReady]=useState(false);
   const [benchReady,setBenchReady]=useState<Readiness|null>(null);
   const [notice,setNotice]=useState('');
@@ -396,19 +432,30 @@ export default function QaWorkbench({ onManageRepositories }: { onManageReposito
   const [boardChoices, setBoardChoices] = useState<BoardChoice[]>([]);
   const [pointId, setPointId] = useState('');
   const [benchId, setBenchId] = useState('');
-  const [flashFirmware, setFlashFirmware] = useState(true);
-  const [developerMode,setDeveloperMode] = useState(false);
-  const [executeBasic, setExecuteBasic] = useState(true);
-  const [wearOverride, setWearOverride] = useState(false);
+  const [mode, setMode] = useState<TestMode>('quick');
+  const developerMode = mode === 'quick';
+  const flashFirmware = mode === 'full';
+  const executeBasic = mode !== 'delivery';
+  const [historyOrigin, setHistoryOrigin] = useState('all');
+  const [historyState, setHistoryState] = useState('all');
+  const [historyProduct, setHistoryProduct] = useState('all');
   const [basicDefinitions,setBasicDefinitions]=useState<BasicDefinition[]>([]);
+  const [specialDefinitions,setSpecialDefinitions]=useState<SpecialDefinition[]>([]);
+  const [definitionsLoaded,setDefinitionsLoaded]=useState(false);
+  const [specialRuns,setSpecialRuns]=useState<SpecialRun[]>([]);
+  const [releasePlanId,setReleasePlanId]=useState('');
+  const [releaseImportProductId,setReleaseImportProductId]=useState('');
   const [evidenceCase,setEvidenceCase]=useState('');
   const [deviceSerial, setDeviceSerial] = useState('');
   const [devices, setDevices] = useState<{serial:string; mode:string;version?:string}[]>([]);
   const [deviceScan, setDeviceScan] = useState<'idle'|'loading'|'done'|'error'>('idle');
   const [deviceError, setDeviceError] = useState('');
-  const [deviceScanTime, setDeviceScanTime] = useState<string | null>(null);
   const [deviceScanRevision, setDeviceScanRevision] = useState(0);
   const [selectedCases, setSelectedCases] = useState<string[]>([]);
+  const [quickExecution,setQuickExecution]=useState<'automatic'|'gated'>('automatic');
+  const [quickScenarioCode,setQuickScenarioCode]=useState('');
+  const [quickOperator,setQuickOperator]=useState('');
+  const launchInFlight=useRef(false);
   const [parameters, setParameters] = useState<Record<string, string>>({});
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [busy, setBusy] = useState(false);
@@ -420,12 +467,17 @@ export default function QaWorkbench({ onManageRepositories }: { onManageReposito
     const order=(code:string)=>{const i=basicDefinitions.findIndex(d=>d.id===code);return i<0?999:i;};
     return order(a.code)-order(b.code) || a.code.localeCompare(b.code);
   });
+  const manualGate=developerMode&&quickExecution==='gated';
+  const availableAutomaticCases=orderedCases.filter(c=>basicDefinitions.some(d=>d.id===c.code) && (!developerMode || ((c.code.startsWith('SWITCH-')||c.code.startsWith('INFO-')||c.code.startsWith('FILE-')||c.code.startsWith('FACTORY-')||c.code==='STREAM-RGB-DEPTH')&&c.code!=='SWITCH-ROTATE-CONTROL')));
+  const quickGateDefinitions=specialDefinitions.filter(definition=>cases.some(c=>c.code===definition.code));
+  const selectedGate=quickGateDefinitions.find(definition=>definition.code===quickScenarioCode);
+  const selectedCount=manualGate?(selectedGate?1:0):selectedCases.length;
   useEffect(()=>{
     const timer=window.setTimeout(()=>{
     const params=new URLSearchParams(window.location.search);
     const target=params.get('qa');
-    if(target && ['products','rounds','cases','benches','releases','schedules','product-detail','round-detail'].includes(target)) setScreen(target as Screen);
-    setProductId(params.get('product') || '');setRoundId(params.get('round') || '');
+    if(target && ['start','special','products','rounds','cases','benches','releases','schedules','product-detail','round-detail'].includes(target)) setScreen(target as Screen);
+    setProductId(params.get('product') || '');setRoundId(params.get('round') || '');setReleasePlanId(params.get('validation_plan') || '');
     if(params.get('tab')==='baseline')setTab('baseline');
     setLocationReady(true);
     },0);
@@ -434,23 +486,24 @@ export default function QaWorkbench({ onManageRepositories }: { onManageReposito
   useEffect(()=>{
     if(!locationReady)return;
     const url=new URL(window.location.href);
-    url.searchParams.set('qa',screen==='round-wizard'?'product-detail':screen==='product-wizard'?'products':screen);
+    url.searchParams.set('qa',screen==='round-wizard'?'start':screen==='product-wizard'?'products':screen);
     for(const key of ['product','round','tab'])url.searchParams.delete(key);
-    if(screen.startsWith('product') || screen==='round-wizard'){
+    if(screen.startsWith('product') || screen==='round-wizard' || screen==='start'){
       if(productId)url.searchParams.set('product',productId);
       if(tab==='baseline')url.searchParams.set('tab',tab);
     }
     if(screen==='round-detail')url.searchParams.set('round',roundId);
+    if(screen==='releases') { if(releasePlanId)url.searchParams.set('validation_plan',releasePlanId); else url.searchParams.delete('validation_plan'); }
     window.history.replaceState(null,'',url);
-  },[locationReady,screen,productId,roundId,tab]);
-  const product = products.find(item => item.id === productId);
+  },[locationReady,screen,productId,roundId,tab,releasePlanId]);
+  const product = products.find(item => item.id === productId) || (products.length === 1 ? products[0] : undefined);
   const isRv1126b = Boolean(product?.board_config.toLowerCase().includes('rv1126b'));
   const round = rounds.find(item => item.id === roundId);
   const sdk = sdks.find(item => item.id === sdkId);
   const application = applications.find(item => item.id === applicationId);
   const sdkBusy = Boolean(product && (rounds.some(r=>r.product.sdk_repository_id===product.sdk_repository_id && ['created','checking_out','building','packaging','transferring','verifying'].includes(r.status)) || products.some(p=>p.sdk_repository_id===product.sdk_repository_id && p.status==='verifying')));
-  const productRounds = rounds.filter(item => item.product_id === productId);
-  const activeView: View = screen.startsWith('round') ? 'rounds' : screen.startsWith('product') ? 'products' : screen as View;
+  const productRounds = rounds.filter(item => item.product_id === product?.id);
+  const activeView: View = screen==='round-wizard' ? 'start' : screen.startsWith('round') ? 'rounds' : screen.startsWith('product') ? 'products' : screen as View;
 
   const refresh = useCallback(async () => {
     const [p, s, c, b, r] = await Promise.all([
@@ -470,8 +523,12 @@ export default function QaWorkbench({ onManageRepositories }: { onManageReposito
     let alive=true;
     const refreshDefinitions=async()=>{
       try {
-        const definitions=await request<BasicDefinition[]>('/api/qa/basic-case-definitions');
-        if(alive)setBasicDefinitions(definitions);
+        const [definitions,specials,history]=await Promise.all([
+          request<BasicDefinition[]>('/api/qa/basic-case-definitions'),
+          request<SpecialDefinition[]>('/api/qa/special-scenarios'),
+          request<SpecialRun[]>('/api/qa/special-runs'),
+        ]);
+        if(alive){setBasicDefinitions(definitions);setSpecialDefinitions(specials);setSpecialRuns(history);setDefinitionsLoaded(true);}
       } catch(cause) { if(alive)setError(String(cause)); }
     };
     void refreshDefinitions();
@@ -488,14 +545,14 @@ export default function QaWorkbench({ onManageRepositories }: { onManageReposito
     return () => { alive = false; };
   }, [sdkId]);
   useEffect(() => {
-    if (!productId) return;
+    if (!product?.id) return;
     let alive = true;
-    request<TestPoint[]>(`/api/qa/products/${productId}/test-points`).then(result => { if (alive) setPoints(result); }).catch(cause => { if (alive) setError(String(cause)); });
+    request<TestPoint[]>(`/api/qa/products/${product.id}/test-points`).then(result => { if (alive) setPoints(result); }).catch(cause => { if (alive) setError(String(cause)); });
     return () => { alive = false; };
-  }, [productId]);
+  }, [product?.id]);
 
   useEffect(() => {
-    if (!benchId || (!flashFirmware && !developerMode)) return;
+    if (screen !== 'round-wizard' || !benchId || (!flashFirmware && !developerMode)) return;
     const controller = new AbortController();
     const detect = async () => {
       setDeviceScan('loading'); setDeviceError(''); setDevices([]); setDeviceSerial('');
@@ -503,7 +560,7 @@ export default function QaWorkbench({ onManageRepositories }: { onManageReposito
         const found = await request<{serial:string; mode:string;version?:string}[]>(`/api/qa/benches/${benchId}/devices?chip=${isRv1126b ? "RV1126B" : "RK3572"}`, {signal:controller.signal});
         if (controller.signal.aborted) return;
         setDevices(found); setDeviceSerial(found.length===1 ? found[0].serial : '');
-        setDeviceScan('done'); setDeviceScanTime(new Date().toISOString());
+        setDeviceScan('done');
       } catch (cause) {
         if (controller.signal.aborted) return;
         setDeviceScan('error'); setDeviceError(cause instanceof Error ? cause.message : String(cause));
@@ -511,7 +568,7 @@ export default function QaWorkbench({ onManageRepositories }: { onManageReposito
     };
     void detect();
     return () => controller.abort();
-  }, [benchId, flashFirmware, developerMode, deviceScanRevision, isRv1126b]);
+  }, [screen, benchId, flashFirmware, developerMode, deviceScanRevision, isRv1126b]);
 
   async function perform(work: () => Promise<void>) {
     setBusy(true); setError(null);
@@ -520,7 +577,15 @@ export default function QaWorkbench({ onManageRepositories }: { onManageReposito
   }
   function openProduct(item: Product) { if (item.id !== productId) setPoints([]); setProductId(item.id); setScreen('product-detail'); setTab('history'); }
   function openRound(item: TestRound) { setNotice('');setError(null);setEvidenceCase(''); setRoundId(item.id); setScreen('round-detail'); }
-  function newRound() { setNotice('');setBenchReady(null);setPointId(''); setBenchId(''); setDeviceSerial(''); setDevices([]); setSelectedCases(cases.filter(item=>basicDefinitions.some(d=>d.id===item.code)).map(item=>item.id)); setParameters({}); setFlashFirmware(true); setExecuteBasic(true); setWearOverride(false); setScreen('round-wizard'); }
+  function newRound(nextMode: TestMode) {
+    if (!product) return;
+    setProductId(product.id); setMode(nextMode); setNotice(''); setError(null); setBenchReady(null);
+    setPointId('');
+    const available = benches.filter(item=>item.enabled);
+    setBenchId(available.length===1 ? available[0].id : '');
+    setDeviceSerial(''); setDevices([]); setDeviceScan('idle'); setDeviceError('');
+    setSelectedCases([]);setQuickExecution('automatic');setQuickScenarioCode('');setQuickOperator('');setParameters({});setScreen('round-wizard');
+  }
   function newProduct() { setSdkId(''); setManifest(null); setApplications([]); setApplicationId(''); setBoard('');setBoardChoices([]); setScreen('product-wizard'); }
   async function verifyBaseline() {
     if (!product) return;
@@ -537,17 +602,25 @@ export default function QaWorkbench({ onManageRepositories }: { onManageReposito
     });
   }
   function createRound(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!product) return;
+    event.preventDefault(); if (!product||launchInFlight.current) return;
+    launchInFlight.current=true;
     void perform(async () => {
+      if(manualGate){
+        if(!selectedGate||!quickOperator.trim()||!benchId||!deviceSerial)throw new Error('请选择人工门控场景、在线模组并填写操作者');
+        const created=await request<SpecialRun>('/api/qa/special-runs',{method:'POST',body:JSON.stringify({scenario_code:selectedGate.code,product_id:product.id,bench_id:benchId,device_serial:deviceSerial,operator:quickOperator.trim()})});
+        setSpecialRuns(current=>[created,...current.filter(run=>run.id!==created.id)]);
+        openSpecial(created.id);
+        return;
+      }
       const parsed: Record<string, Record<string, unknown>> = {};
-      for (const id of selectedCases) {
+      for (const id of executeBasic ? selectedCases : []) {
         const value = JSON.parse(parameters[id]?.trim() || '{}');
         if (!value || Array.isArray(value) || typeof value !== 'object') throw new Error('Test Case 参数必须为 JSON 对象');
         parsed[id] = value;
       }
-      const created = await request<TestRound>('/api/qa/test-rounds', {method:'POST', body:JSON.stringify({product_id:product.id, test_point_id:developerMode ? null : pointId, developer_mode:developerMode, bench_id:benchId, test_case_ids:[...selectedCases].sort((a,b)=>basicDefinitions.findIndex(d=>d.id===cases.find(c=>c.id===a)?.code)-basicDefinitions.findIndex(d=>d.id===cases.find(c=>c.id===b)?.code)), test_case_parameters:parsed, execute_test_cases:executeBasic, flash_firmware:flashFirmware, device_serial:deviceSerial, allow_wear_limit_override:wearOverride, auto_start:true})});
+      const created = await request<TestRound>('/api/qa/test-rounds', {method:'POST', body:JSON.stringify({product_id:product.id, test_point_id:developerMode ? null : pointId, developer_mode:developerMode, bench_id:benchId, test_case_ids:[...(executeBasic ? selectedCases : [])].sort((a,b)=>basicDefinitions.findIndex(d=>d.id===cases.find(c=>c.id===a)?.code)-basicDefinitions.findIndex(d=>d.id===cases.find(c=>c.id===b)?.code)), test_case_parameters:parsed, execute_test_cases:executeBasic, flash_firmware:flashFirmware, device_serial:deviceSerial, auto_start:true})});
       await refresh(); openRound(created);
-    });
+    }).finally(()=>{launchInFlight.current=false;});
   }
   function saveDialog(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const data = new FormData(event.currentTarget);
@@ -560,8 +633,6 @@ export default function QaWorkbench({ onManageRepositories }: { onManageReposito
         setPointId(saved.id);setNotice('Patch Set 已核验并选中；重复登记会复用已有测试点。');
       } else if (dialog === 'bench') {
         await request('/api/qa/benches', {method:'POST', body:JSON.stringify({name:data.get('name'), host:data.get('host'), port:Number(data.get('port')), user:data.get('user'), remote_root:data.get('remote_root')})});
-      } else {
-        await request('/api/qa/test-cases', {method:'POST', body:JSON.stringify({code:data.get('code'), name:data.get('name'), description:data.get('description'), command:data.get('command'), expected_exit_code:Number(data.get('expected_exit_code')), timeout_seconds:Number(data.get('timeout_seconds')), risk_level:data.get('risk_level'), category:data.get('category'), enabled:true})});
       }
       setDialog(null); await refresh();
     });
@@ -575,27 +646,62 @@ export default function QaWorkbench({ onManageRepositories }: { onManageReposito
       window.setTimeout(()=>URL.revokeObjectURL(url),30000);
     });
   }
+  function openSpecial(runId?:string,code?:string,planId?:string) {
+    const url=new URL(window.location.href);
+    for(const key of ['special_run','special_case','validation_plan'])url.searchParams.delete(key);
+    if(runId)url.searchParams.set('special_run',runId);
+    if(code)url.searchParams.set('special_case',code);
+    if(planId)url.searchParams.set('validation_plan',planId);
+    window.history.replaceState(null,'',url);
+    setScreen('special');setError(null);
+  }
+  function openPlan(id:string) {setReleaseImportProductId('');setReleasePlanId(id);setScreen('releases');setError(null);}
+  function openPrebuiltImport() {if(!product)return;setReleasePlanId('');setReleaseImportProductId(product.id);setScreen('releases');setError(null);setNotice('');}
   function roundList(items: TestRound[]) {
-    return items.length ? <div className="wb-history">{items.map(item => <button key={item.id} onClick={() => openRound(item)}><span><strong>TEST-{String(item.display_number).padStart(6,'0')}</strong><small>{formatDate(item.created_at)}</small></span><span>{item.product.name}<small>{({quick:'快速测试',scheduled:'定时测试',release:'发布验证',manual:'手动常规测试'} as Record<string,string>)[item.origin||'manual']} · {String((item.product_snapshot.test_point as {subject?:string}|undefined)?.subject||'当前固件')}</small></span><StatusPill status={item.status} label={roundStatus[item.status] || item.status} /></button>)}</div> : <p className="quiet-row">暂无测试历史。从基线可用的产品创建第一轮测试。</p>;
+    return items.length ? <div className="wb-history">{items.map(item => <button key={item.id} onClick={() => openRound(item)}><span><strong>TEST-{String(item.display_number).padStart(6,'0')}</strong><small>{formatDate(item.created_at)}</small></span><span>{item.product.name}<small>{originLabels[item.origin||'manual']} · {roundSource(item)}</small></span><StatusPill status={roundSyncError(item)?'blocked':item.status} label={roundLabel(item)} /></button>)}</div> : <p className="quiet-row">暂无符合条件的测试记录。</p>;
   }
 
-  return <section className="test-workbench wb-workspace">
-    <nav className="tw-nav" aria-label="测试平台导航">{([['products','快速 / 手动测试'],['schedules','常规定时测试'],['releases','发布验证'],['rounds','测试轮次'],['cases','用例库'],['benches','测试台节点']] as Array<[View,string]>).map(([key,label]) => <button key={key} className={activeView === key ? 'active' : ''} onClick={() => {setScreen(key);setError(null);setNotice('');}}>{label}</button>)}<span>{loading ? '正在读取服务端状态…' : `更新于 ${formatDate(updated)}`}</span></nav>
+  return <section className="test-workbench wb-workspace" onInvalidCapture={event=>{
+    let ancestor=(event.target as HTMLElement).parentElement;
+    while(ancestor && ancestor!==event.currentTarget){
+      if(ancestor instanceof HTMLDetailsElement)ancestor.open=true;
+      ancestor=ancestor.parentElement;
+    }
+  }}>
+    <nav className="tw-nav wb-main-nav" aria-label="测试平台导航">
+      {([['start','开始测试'],['special','特殊场景'],['rounds','测试记录'],['releases','发布验证'],['schedules','定时回归'],['products','配置管理']] as Array<[View,string]>).map(([key,label]) => <button key={key} aria-current={(key==='products' ? ['products','cases','benches'].includes(activeView) : activeView===key) ? 'page' : undefined} className={(key==='products' ? ['products','cases','benches'].includes(activeView) : activeView===key) ? 'active' : ''} onClick={()=>{setReleaseImportProductId('');setScreen(key);setError(null);setNotice('');}}>{label}</button>)}
+      <span role="status">{loading ? '正在连接…' : `更新于 ${formatDate(updated)}`}</span>
+    </nav>
+    {['products','cases','benches'].includes(activeView) && <nav className="wb-settings-nav" aria-label="配置管理">{([['products','产品与基线'],['cases','用例库'],['benches','测试台节点']] as Array<[View,string]>).map(([key,label])=><button key={key} aria-current={activeView===key?'page':undefined} onClick={()=>setScreen(key)}>{label}</button>)}</nav>}
     {notice && <p role="status" className="wb-receipt">{notice}</p>}
     {error && <div className="error-banner" role="alert"><span>{error}</span><button aria-label="关闭错误" onClick={() => setError(null)}>×</button></div>}
-    {(screen==='releases'||screen==='schedules')&&<PlatformWorkbench key={screen} mode={screen} products={products} benches={benches} cases={orderedCases} rounds={rounds} executable={basicDefinitions.map(d=>d.id)} api={request} apiBase={apiBase()} openRound={id=>{const found=rounds.find(r=>r.id===id);if(found)openRound(found);else{setRoundId(id);setScreen('round-detail');void refresh();}}} renderParameters={(code,value,onChange)=>code==='STREAM-RGB-DEPTH'?<StreamParameterForm value={value} onChange={onChange}/>:caseParameterFields[code]?<CaseParameterForm code={code} value={value} onChange={onChange}/>:<p>此用例使用固定配置，无可调整参数。</p>}/>}
+    {screen==='special' && <SpecialScenarios products={products} benches={benches} api={request} apiBase={apiBase()} initialProductId={product?.id} onOpenPlan={openPlan} onOpenRound={id=>{setRoundId(id);setScreen('round-detail');void refresh();}}/>}
+    {(screen==='releases'||screen==='schedules')&&<PlatformWorkbench key={screen+releaseImportProductId} mode={screen} initialPrebuiltProductId={releaseImportProductId||undefined} initialPlanId={releasePlanId} onSelectPlan={setReleasePlanId} openSpecial={openSpecial} specialDefinitions={specialDefinitions} products={products} benches={benches} cases={orderedCases} rounds={rounds} executable={basicDefinitions.map(d=>d.id)} api={request} apiBase={apiBase()} openRound={id=>{const found=rounds.find(r=>r.id===id);if(found)openRound(found);else{setRoundId(id);setScreen('round-detail');void refresh();}}} renderParameters={(code,value,onChange)=>code==='STREAM-RGB-DEPTH'?<StreamParameterForm value={value} onChange={onChange}/>:caseParameterFields[code]?<CaseParameterForm code={code} value={value} onChange={onChange}/>:<p>此用例使用固定配置，无可调整参数。</p>}/>}
+    {screen === 'start' && <>
+      <div className="tw-heading"><div><span className="panel-label">TEST WORKBENCH</span><h2>开始测试</h2><p>选择固件来源，配置本次需要验证的项目。</p></div></div>
+      <section className="panel wb-start-product"><label>测试产品<select value={product?.id || ''} onChange={event=>{setProductId(event.target.value);setPoints([]);setPointId('');}}><option value="">选择产品</option>{products.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>{product && <div><StatusPill status={product.status} label={productStatus[product.status]}/><button type="button" onClick={()=>openProduct(product)}>产品配置 →</button></div>}</section>
+      {!products.length && !loading && <p className="panel">尚未配置产品。<button onClick={()=>setScreen('products')}>前往产品与基线</button></p>}
+      <div className="wb-start-modes">
+        <button className="panel wb-mode-card" disabled={!product || busy} onClick={()=>newRound('quick')}><span className="panel-label">当前模组</span><h3>测试当前固件</h3><p>直接验证在线模组，省去编译和烧录。</p><small>选择设备 → 选择用例 → 执行测试</small><strong>配置测试 →</strong></button>
+        <button className="panel wb-mode-card" disabled={!product || !isRv1126b || busy} onClick={openPrebuiltImport}><span className="panel-label">175 本地镜像</span><h3>已有镜像烧录测试</h3><p>使用 SDK 中已编译好的镜像，保存固件后选择测试项目。</p><small>{product&&!isRv1126b?'当前支持 RV1126B 产品':'导入镜像 → 创建清单 → 烧录并测试'}</small><strong>选择已有镜像 →</strong></button>
+        <button className="panel wb-mode-card" disabled={!product || product.status!=='ready' || busy} onClick={()=>newRound('full')}><span className="panel-label">指定提交</span><h3>编译烧录测试</h3><p>验证 Gerrit 提交，构建并烧录后执行用例。</p><small>{product && product.status!=='ready' ? '请先在产品配置中完成基线验证' : '选择版本 → 选择设备与用例 → 完整验证'}</small><strong>配置测试 →</strong></button>
+      </div>
+      <section className="panel wb-delivery-shortcut"><div><strong>特殊场景 · 人工门控</strong><p>SN 断电持久化、日志压力、老化串口、异常 OTA；按步骤接线、确认并记录证据。</p></div><button onClick={()=>setScreen('special')}>进入特殊场景 →</button></section>
+      <section className="panel wb-delivery-shortcut"><div><strong>仅构建交付</strong><p>从指定提交生成镜像并交付到测试台，供后续使用。</p></div><button disabled={!product || product.status!=='ready' || busy} onClick={()=>newRound('delivery')}>配置构建 →</button></section>
+      <section className="panel"><header><h3>最近测试</h3><button onClick={()=>setScreen('rounds')}>全部记录 →</button></header>{roundList(rounds.filter(item=>!product || item.product_id===product.id).slice(0,5))}</section>
+    </>}
     {screen === 'products' && <>
-      <div className="tw-heading"><div><span className="panel-label">QA / PRODUCTS</span><h2>快速 / 手动测试</h2><p>快速检查当前模组固件，或手动选择 Gerrit 版本编译、烧录和测试。</p></div><button className="primary-button" disabled={!sdks.length || loading} onClick={newProduct}>＋ 新建测试产品</button></div>
+      <div className="tw-heading"><div><span className="panel-label">QA / PRODUCTS</span><h2>产品与基线</h2><p>维护 SDK、应用仓库与板级配置；构建前验证产品基线。</p></div><button className="primary-button" disabled={!sdks.length || loading} onClick={newProduct}>＋ 新建测试产品</button></div>
       {!sdks.length && !loading && <p className="tw-warning">175 尚未注册 SDK。请由管理员预先登记本地 SDK；测试产品只从登记列表选择。</p>}
-      <ol className="wb-process-guide"><li>选择产品基线</li><li>锁定 Gerrit Patch Set</li><li>选择测试台与用例</li><li>编译 → 烧录 → 版本确认</li><li>检查断言与下载报告</li></ol><p className="wb-build-hint">每轮记录精确版本、镜像摘要、设备身份和实际结果。编译或烧录成功不代表测试通过；失败后创建新轮次，历史结果不会覆盖。</p><div className="wb-products">{products.map(item => { const history = rounds.filter(r => r.product_id === item.id); const last = history[0]; return <button className="panel wb-product" key={item.id} onClick={() => openProduct(item)}><header><span className="panel-label">{item.code}</span><StatusPill status={item.status} label={productStatus[item.status]} /></header><h3>{item.name}</h3><p>{item.gerrit_project}</p><Facts items={[["Board Config",item.board_config],["Manifest",item.manifest_snapshot.manifest_commit?.slice(0,12)],["测试轮次",history.length]]} /><footer><span>{last ? `最近 · ${last.product_snapshot.developer_mode ? '当前固件' : `${last.change_number}/PS${last.patchset_number}`}` : '尚未创建 Test Round'}</span><span>进入产品 →</span></footer></button>; })}</div>
+      <div className="wb-products">{products.map(item => { const history = rounds.filter(r => r.product_id === item.id); const last = history[0]; return <button className="panel wb-product" key={item.id} onClick={() => openProduct(item)}><header><span className="panel-label">{item.code}</span><StatusPill status={item.status} label={productStatus[item.status]} /></header><h3>{item.name}</h3><p>{item.gerrit_project}</p><Facts items={[["Board Config",item.board_config],["Manifest",item.manifest_snapshot.manifest_commit?.slice(0,12)],["测试轮次",history.length]]} /><footer><span>{last ? `最近 · ${last.product_snapshot.developer_mode ? '当前固件' : `${last.change_number}/PS${last.patchset_number}`}` : '尚未创建 Test Round'}</span><span>进入产品 →</span></footer></button>; })}</div>
       {!products.length && !loading && <div className="empty-state panel"><h2>从一个明确的产品基线开始</h2><p>一个 SDK、一份 Manifest、一个被测应用 Repo、一个 Board Config。</p></div>}
     </>}
     {screen === 'product-detail' && product && <>
-      <div className="tw-heading"><div><button className="tw-back" onClick={() => setScreen('products')}>← 测试产品</button><span className="panel-label">{product.code}</span><h2>{product.name}</h2><p>{product.gerrit_project} · {product.board_config}</p></div><div className="tw-heading-actions"><StatusPill status={product.status} label={productStatus[product.status]} /><button className="primary-button" disabled={busy || product.status !== 'ready'} onClick={()=>{setDeveloperMode(false);newRound();}}>编译烧录测试</button><button className="primary-button" disabled={busy} onClick={()=>{newRound();setDeveloperMode(true);setFlashFirmware(false);setSelectedCases([]);}}>快速测试当前模组</button></div></div>
+      <div className="tw-heading"><div><button className="tw-back" onClick={() => setScreen('products')}>← 测试产品</button><span className="panel-label">{product.code}</span><h2>{product.name}</h2><p>{product.gerrit_project} · {product.board_config}</p></div><div className="tw-heading-actions"><StatusPill status={product.status} label={productStatus[product.status]} /><button className="primary-button" disabled={busy || product.status !== 'ready'} onClick={()=>newRound('full')}>编译烧录测试</button><button className="primary-button" disabled={busy} onClick={()=>newRound('quick')}>测试当前固件</button><button disabled={busy||!isRv1126b} onClick={openPrebuiltImport}>已有镜像烧录测试</button></div></div>
       <div className="wb-product-tabs" role="tablist" aria-label="产品详情">{([['history','测试时间线'],['points',`测试点 · ${points.length}`],['baseline','SDK / Manifest 基线']] as Array<[ProductTab,string]>).map(([key,label]) => <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}>{label}</button>)}</div>
       {tab === 'history' && <section className="panel"><header><h3>测试历史</h3><span>{productRounds.length} 轮</span></header>{roundList(productRounds)}</section>}
       {tab === 'points' && <section className="panel"><header><div><h3>Gerrit 测试点</h3><p>{product.gerrit_project}</p></div><button className="secondary-button" onClick={() => {setPointReady(false); setError(null); setDialog('point');}}>＋ 登记 Patchset</button></header>{points.map(point => <div className="wb-point" key={point.id}><strong>{point.change_number} / PS{point.patchset_number}</strong><span>{point.subject}<small>{point.branch} · {point.commit_sha}</small><small>Owner：{point.owner || '—'} · 提交时间：{formatDate(point.submitted_at)}</small></span><StatusPill status={point.ready?'ready':'blocked'} label={point.ready?'可选择':'等待依赖'} /></div>)}{!points.length && <p className="quiet-row">粘贴 Gerrit 链接即可查询并登记 Patchset，服务端会核验 Ref。</p>}</section>}
-      {tab === 'baseline' && <><div className="tw-detail-grid"><section className="panel"><h3>Manifest 快照</h3><Manifest manifest={product.manifest_snapshot} /></section><section className="panel"><h3>唯一被测应用 Repo</h3><Facts items={[["Gerrit Project",product.gerrit_project],["本地路径",product.tested_repository.root_path],["分支",product.repository_snapshot.branch],["HEAD",product.repository_snapshot.head],["Git 状态",product.repository_snapshot.git_status],["Board Config",product.board_config]]} /></section></div><section className="panel"><header><div><h3>基线构建</h3><p>验证当前 SDK；命令成功且镜像校验通过后才能创建 Test Round。</p></div><button className="primary-button" disabled={busy || sdkBusy} onClick={() => void verifyBaseline()}>{busy || product.status === 'verifying' ? '基线验证中…' : sdkBusy ? 'SDK 正被测试轮次使用' : '验证并编译基线'}</button></header><BaselineBuild product={product} /></section></>}
+      {tab === 'baseline' && <><div className="tw-detail-grid"><section className="panel"><h3>Manifest 快照</h3><Manifest manifest={product.manifest_snapshot} /></section><section className="panel"><h3>唯一被测应用 Repo</h3><Facts items={[["Gerrit Project",product.gerrit_project],["本地路径",product.tested_repository.root_path],["分支",product.repository_snapshot.branch],["HEAD",product.repository_snapshot.head],["Git 状态",product.repository_snapshot.git_status],["Board Config",product.board_config]]} /></section></div><section className="panel"><header><div><h3>基线构建</h3><p>编译烧录与构建交付需要有效基线；当前固件测试可直接执行。</p></div><button className="primary-button" disabled={busy || sdkBusy} onClick={() => void verifyBaseline()}>{busy || product.status === 'verifying' ? '基线验证中…' : sdkBusy ? 'SDK 正被测试轮次使用' : '验证并编译基线'}</button></header><BaselineBuild product={product} /></section></>}
     </>}
     {screen === 'product-wizard' && <form onSubmit={saveProduct}><div className="tw-heading"><div><span className="panel-label">NEW PRODUCT</span><h2>建立产品基线</h2></div><button type="button" className="tw-back" onClick={() => setScreen('products')}>取消</button></div>
       <section className="panel"><h3>01 / 选择已注册 SDK</h3><div className="tw-choice-grid">{sdks.map(item => <label key={item.id} className={sdkId===item.id?'selected':''}><input type="radio" name="sdk" required checked={sdkId===item.id} onChange={() => {setSdkId(item.id);setManifest(null);setApplications([]);setApplicationId('');setBoard('');setBoardChoices([]);}} /><span><strong>{item.name}</strong><code>{item.root_path}</code></span></label>)}</div></section>
@@ -603,27 +709,61 @@ export default function QaWorkbench({ onManageRepositories }: { onManageReposito
       <section className="panel"><h3>03 / 选择 Board Config</h3><div className="tw-form-grid"><label>Board Config<select required value={board} onChange={event => setBoard(event.target.value)}><option value="">请选择板级配置</option>{boardChoices.map(item => <option key={item.board_config} value={item.board_config}>{item.menu_index}. {item.board_config}</option>)}</select></label><label>配置命令<input readOnly value={boardChoices.find(item => item.board_config === board)?.display_command || ''} /></label><label>固件目录<input readOnly value={sdk.artifact_root} /></label></div></section>
       <section className="panel"><h3>04 / 保存产品</h3><div className="tw-form-grid"><label>产品名称<input name="name" required /></label><label>产品标识<input name="code" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,79}" required placeholder="1126B-struct" /></label></div><p>保存后进入产品基线页，执行基线验证。编译退出码与产物校验共同决定结果。</p><div className="tw-actions"><button type="submit" className="primary-button" disabled={busy || !manifest || !application || !board}>保存产品基线</button></div></section></>}
     </form>}
-    {screen === 'rounds' && <><div className="tw-heading"><div><span className="panel-label">QA / TEST ROUNDS</span><h2>测试轮次</h2><p>每轮都保留独立的源码、构建与交付记录。</p></div><button className="secondary-button" onClick={() => setScreen('products')}>从产品创建 →</button></div><section className="panel">{roundList(rounds)}</section></>}
-    {screen === 'round-wizard' && product && <form onSubmit={createRound}><div className="tw-heading"><div><span className="panel-label">{product.code} / NEW ROUND</span><h2>配置测试轮次</h2></div><button type="button" className="tw-back" onClick={() => setScreen('product-detail')}>取消</button></div><div className="wb-round-layout"><aside className="panel wb-locked"><span className="panel-label">本轮锁定</span><h3>{product.name}</h3><Facts items={[["Repo",product.gerrit_project],["Board Config",product.board_config]]} /><StatusPill status={product.status} label={productStatus[product.status]} /><p>本轮执行范围在下方确认。</p><details><summary>产品历史 · {productRounds.length} 轮</summary>{productRounds.map(item => <p key={item.id}>{item.product_snapshot.developer_mode ? '当前固件' : `${item.change_number}/PS${item.patchset_number}`} · {roundStatus[item.status]}</p>)}</details></aside><div>
-      <section className="panel"><h3>执行模式</h3><label><input type="checkbox" checked={developerMode} onChange={event=>{const quick=event.target.checked;setDeveloperMode(quick);setExecuteBasic(true);setFlashFirmware(!quick);setSelectedCases([]);}} />开发者快速测试：使用当前模组固件，跳过编译与烧录</label>{developerMode && <p>保存实际固件版本、设备身份和用例版本。模式或分辨率切换可能重启模组。</p>}</section>{!developerMode && <section className="panel"><header><h3>01 / 选择测试点</h3><button type="button" onClick={() => {setPointReady(false); setError(null); setDialog('point');}}>登记 / 选用 Patch Set</button></header><div className="tw-point-list">{points.map(item => <label key={item.id}><input type="radio" name="point" required disabled={!item.ready} checked={pointId===item.id} onChange={() => setPointId(item.id)} /><span><strong>{item.change_number} / PS{item.patchset_number} · {item.subject}</strong><small>{item.branch} · {item.commit_sha}</small><small>Owner：{item.owner || '—'} · 提交时间（Patchset 上传）：{formatDate(item.submitted_at)}</small></span></label>)}</div>{!points.length && <p>此产品尚无测试点。</p>}</section>}
-      {!developerMode && <section className="panel"><h3>02 / 构建与镜像</h3><Facts items={[["Board Config",product.board_config],["配置方式","./build.sh lunch，由服务端输入对应菜单序号"],["构建命令",isRv1126b ? "./build.sh all" : "./build.sh"],["镜像目录",product.sdk_repository.artifact_root],["镜像规则",isRv1126b ? "oem.img / system.img / boot.img" : "update.img"]]} /><p>提交后由服务端核验源码、编译并检查本轮新产物。</p></section>}
-      <section className="panel"><h3>03 / 选择并检查测试台</h3><label>接收节点<select required value={benchId} onChange={event => {setBenchId(event.target.value);setBenchReady(null); setDeviceSerial(''); setDevices([]); setDeviceScan('idle'); setDeviceScanTime(null);}}><option value="">请选择已启用的测试台</option>{benches.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name} · {item.user}@{item.host}</option>)}</select></label>{benchId && <p><code>{benches.find(item => item.id===benchId)?.remote_root}</code></p>}<p>启用状态不代表在线；请以就绪检查和设备检测结果为准。</p>{benchId && isRv1126b && !developerMode && <BenchReadiness key={`${benchId}-${executeBasic}`} benchId={benchId} full={executeBasic} onResult={setBenchReady} />}{!developerMode && <label>执行范围<select value={executeBasic ? 'full' : 'build'} onChange={event=>{const full=event.target.value==='full';setBenchReady(null);setExecuteBasic(full);setFlashFirmware(full);}}><option value="full">完整验证：编译、烧录、启动确认、执行用例</option><option value="build">仅构建并交付：不烧录、不测试</option></select></label>}{(flashFirmware || developerMode) && <><p>检测位置：{benchId ? `${benches.find(item=>item.id===benchId)?.host} 的 USB 接口（175 通过 SSH 查询）` : '请先选择测试台'}</p><button type="button" className="secondary-button" disabled={busy || !benchId || deviceScan==='loading'} onClick={()=>setDeviceScanRevision(value=>value+1)}>{deviceScan==='loading'?'正在检测远端设备…':isRv1126b ? '重新检测 RMSL321' : '重新检测 Loader / Maskrom 设备'}</button><p role="status" aria-live="polite">{!benchId?'请先选择测试台，选中后自动检测。':deviceScan==='loading'?'正在通过 SSH 查询测试台上的 USB 设备…':deviceScan==='done'?`已检测到 ${devices.length} 台设备 · ${formatDate(deviceScanTime)}${devices.length===1?' · 已自动选中':''}`:deviceScan==='error'?'检测失败':''}</p>{deviceScan==='done' && devices.length===0 && <p className="tw-warning">{isRv1126b ? '测试台连接正常，未发现可读取 CPU 序列号的 RMSL321。请连接模组，等待正常 UVC 启动后重新检测。' : '测试台连接正常，未发现 Loader / Maskrom 设备。请进入烧录模式后重新检测。'}</p>}{deviceScan==='error' && <p className="tw-warning" role="alert">{deviceError}</p>}<label>被测设备<select required disabled={!benchId || deviceScan!=='done' || devices.length===0} value={deviceSerial} onChange={event=>setDeviceSerial(event.target.value)}><option value="">{deviceScan==='loading'?'正在检测…':deviceScan==='done' && !devices.length?'未发现烧录设备':'请选择被测设备'}</option>{devices.map(device=><option key={device.serial} value={device.serial}>{device.serial} · {device.mode}</option>)}</select></label>{developerMode && <p>当前固件：{devices.find(d=>d.serial===deviceSerial)?.version || '待检测'}</p>}<p>{developerMode ? '测试当前模组固件，记录完整版本字符串和 CPU 序列号。' : isRv1126b ? 'RMSL321 V2.0：锁定 CPU 序列号和物理 USB 端口，DFU 写入另一槽的 oem/system/boot，保留标定与用户数据。烧录后必须验证本轮 commit 和启动槽。' : 'RK3572：Controller 将核对 Loader 序列号、芯片和 update.img。'}</p>{isRv1126b && !developerMode && <label className="wb-flash-toggle"><input type="checkbox" checked={wearOverride} onChange={event=>setWearOverride(event.target.checked)} />本轮允许超过开发烧写次数上限（计数及豁免仍记录）</label>}</>}</section>
-      <section className="panel"><h3>04 / 选择用例与参数</h3><p>{developerMode ? '确认当前固件后执行选中的用例；工厂与持久化用例可能重启模组并写入后恢复测试数据。' : executeBasic ? '烧录并验证版本后，按确认区列出的固定顺序执行所选用例。' : '本轮仅保存用例计划，结果保持未测。'}</p>{executeBasic && <p>切换与信息上报用例记录断言和原始证据；需开流的项目保存帧与图片。</p>}{(['basic','special'] as const).map(group => <div key={group}><h4>{group==='basic'?'基本功能 set':'特殊场景 set'}</h4>{orderedCases.filter(item => item.category === group).map(item => <div className="wb-case-select" key={item.id}><label><input type="checkbox" disabled={(executeBasic && !basicDefinitions.some(d=>d.id===item.code)) || (developerMode && (!(item.code.startsWith("SWITCH-") || item.code.startsWith("INFO-") || item.code.startsWith("FILE-") || item.code.startsWith("FACTORY-") || item.code==='STREAM-RGB-DEPTH') || item.code==="SWITCH-ROTATE-CONTROL"))} checked={selectedCases.includes(item.id)} onChange={event => setSelectedCases(current => event.target.checked ? [...current,item.id] : current.filter(id=>id!==item.id))} /><span><strong>{item.code} · {item.name}</strong><small>{item.description}</small>{executeBasic && !basicDefinitions.some(d=>d.id===item.code) && <small>暂不可选：尚未加载到此用例的执行定义，页面每 10 秒自动同步。</small>}</span></label>{selectedCases.includes(item.id) && item.code==='STREAM-RGB-DEPTH' && <StreamParameterForm value={parameters[item.id] || ''} onChange={value=>setParameters(current=>({...current,[item.id]:value}))}/>}{selectedCases.includes(item.id) && caseParameterFields[item.code] && <CaseParameterForm code={item.code} value={parameters[item.id] || ''} onChange={value=>setParameters(current=>({...current,[item.id]:value}))}/> }</div>)}{!cases.some(item => item.category===group) && <p className="quiet-row">此分类暂无已接入用例。新增能力须先实现执行器、断言与恢复逻辑。</p>}</div>)}</section>
-      <section className="panel"><h3>05 / 确认并启动</h3><p>本轮用例顺序：{orderedCases.filter(c=>selectedCases.includes(c.id)).map(c=>c.name).join(" → ") || "尚未选择用例"}</p><p>{developerMode ? "服务端保存当前固件、设备和用例版本，测试台校验测试包后执行；完成后将图片和原始帧同步到 Hub。" : "服务端保存配置，交付 JSON 和镜像并校验 SHA-256。"}</p><p className="tw-warning">{developerMode?'本轮不编译、不烧录；直接执行所选用例并上传图片。':executeBasic?'本轮执行烧录、启动身份确认和选中的基础用例。':flashFirmware?'本轮交付后执行固件烧录；已选 Test Case 保存为计划，不执行用例。':'本轮仅交付文件，不烧录、不执行 Test Case。'}</p><button type="submit" className="primary-button" disabled={busy || (!developerMode && !pointId) || !benchId || !selectedCases.length || ((flashFirmware || developerMode) && !deviceSerial) || (executeBasic && !flashFirmware && !developerMode) || (!developerMode && product.status!=='ready') || (!developerMode && isRv1126b && (benchReady?.bench_id!==benchId || !benchReady.passed))}>{busy ? '正在创建…' : (developerMode?'测试当前固件':flashFirmware?'启动完整测试':'开始构建并交付')}</button></section>
-    </div></div></form>}
+    {screen === 'rounds' && <><div className="tw-heading"><div><h2>测试记录</h2><p>每次执行独立留档，可按来源和状态查找。</p></div><button className="primary-button" onClick={()=>setScreen('start')}>开始新测试</button></div><section className="panel"><div className="wb-history-filters"><label>产品<select value={historyProduct} onChange={e=>setHistoryProduct(e.target.value)}><option value="all">全部产品</option>{products.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></label><label>来源<select value={historyOrigin} onChange={e=>setHistoryOrigin(e.target.value)}><option value="all">全部来源</option>{Object.entries(originLabels).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label><label>状态<select value={historyState} onChange={e=>setHistoryState(e.target.value)}><option value="all">全部状态</option><option value="active">进行中</option><option value="test_complete">测试通过</option><option value="attention">失败 / 阻塞</option><option value="remote_ready">已交付，未测试</option></select></label></div>{roundList(rounds.filter(r=>(historyProduct==='all'||r.product_id===historyProduct)&&(historyOrigin==='all'||(r.origin||'manual')===historyOrigin)&&(historyState==='all'||(historyState==='active'?activeStatuses.includes(r.status):historyState==='attention'?(roundSyncError(r)||['test_failed','bench_failed','build_failed','blocked'].includes(r.status)):r.status===historyState))))}</section></>}
+    {screen === 'round-wizard' && product && <form onSubmit={createRound}>
+      <div className="tw-heading"><div><button type="button" className="tw-back" onClick={()=>setScreen('start')}>← 开始测试</button><h2>{modeLabels[mode]}</h2><p>{product.name} · {developerMode?'使用模组当前运行的固件':mode==='delivery'?'构建镜像并交付，不执行设备测试':'构建所选提交并烧录，确认版本后执行用例'}</p></div></div>
+      {!developerMode && <section className="panel"><header><h3>1. 选择固件版本</h3><button type="button" onClick={()=>{setPointReady(false);setError(null);setDialog('point');}}>从 Gerrit 链接选择</button></header><label>已登记版本<select required value={pointId} onChange={e=>setPointId(e.target.value)}><option value="">选择 Patch Set</option>{points.filter(p=>p.ready).map(p=><option key={p.id} value={p.id}>{p.change_number} / PS{p.patchset_number} · {p.subject}</option>)}</select></label>{pointId && <small>{points.find(p=>p.id===pointId)?.commit_sha}</small>}<details className="wb-evidence"><summary>构建配置</summary><Facts items={[["Board Config",product.board_config],["命令",isRv1126b?'./build.sh all':'./build.sh'],["镜像",isRv1126b?'oem.img / system.img / boot.img':'update.img']]}/></details></section>}
+      <section className="panel"><header><h3>{developerMode?'1':'2'}. {mode==='delivery'?'选择交付测试台':'选择测试设备'}</h3></header>
+        <label>测试台<select required value={benchId} onChange={e=>{setBenchId(e.target.value);setBenchReady(null);setDeviceSerial('');setDevices([]);setDeviceScan('idle');}}><option value="">选择测试台</option>{benches.filter(b=>b.enabled).map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
+        {benchId && !developerMode && isRv1126b && <BenchReadiness key={`${benchId}-${mode}`} benchId={benchId} full={executeBasic} onResult={setBenchReady}/>}
+        {executeBasic && <><div className="wb-device-toolbar"><p role="status">{!benchId?'选择测试台后自动检测设备':deviceScan==='loading'?'正在检测在线设备…':deviceScan==='error'?deviceError:deviceScan==='done'?`发现 ${devices.length} 台设备${devices.length===1?'，已自动选中':''}`:'等待设备检测'}</p><button type="button" disabled={!benchId||deviceScan==='loading'||busy} onClick={()=>setDeviceScanRevision(v=>v+1)}>重新检测</button></div><label>被测模组<select required disabled={deviceScan!=='done'||!devices.length} value={deviceSerial} onChange={e=>setDeviceSerial(e.target.value)}><option value="">选择模组</option>{devices.map(d=><option key={d.serial} value={d.serial}>{d.serial} · {d.mode}</option>)}</select></label>{deviceSerial && <small>当前固件：{devices.find(d=>d.serial===deviceSerial)?.version || '已记录设备身份'}</small>}{deviceScan==='done'&&!devices.length && <p className="tw-warning">{isRv1126b?'请连接 RMSL321，等待正常 UVC 启动后重新检测。':'请连接处于 Loader / Maskrom 模式的设备。'}</p>}</>}
+        {mode==='full' && isRv1126b && <details className="wb-evidence"><summary>烧录范围</summary><p>写入另一槽的 oem / system / boot，启动后确认设备、槽位和本轮版本。</p></details>}
+      </section>
+      {executeBasic && <section className="panel"><header><h3>{developerMode?'2':'3'}. 选择用例</h3><span>已选 {selectedCount} 项{manualGate?' · 人工门控':''}</span></header>
+        {developerMode&&<><nav className="tw-nav" aria-label="当前固件用例执行方式"><button type="button" aria-pressed={!manualGate} className={!manualGate?'active':''} disabled={busy} onClick={()=>setQuickExecution('automatic')}>自动执行 · {availableAutomaticCases.length} 项</button><button type="button" aria-pressed={manualGate} className={manualGate?'active':''} disabled={busy||!isRv1126b} onClick={()=>setQuickExecution('gated')}>特殊场景 · 人工门控 · {quickGateDefinitions.length} 项</button></nav><p>用例库包括自动用例与人工门控场景。自动用例可多选；人工门控每次执行一个场景，完成后可继续选择下一项。</p></>}
+        {manualGate?<CurrentFirmwareGates definitions={quickGateDefinitions} selectedCode={quickScenarioCode} onSelect={setQuickScenarioCode} operator={quickOperator} onOperator={setQuickOperator} disabled={busy}/>:<CaseSelection cases={availableAutomaticCases} selected={selectedCases} onChange={setSelectedCases} renderParameters={c=>c.code==='STREAM-RGB-DEPTH'?<StreamParameterForm value={parameters[c.id]||'{}'} onChange={v=>setParameters(p=>({...p,[c.id]:v}))}/>:caseParameterFields[c.code]?<CaseParameterForm code={c.code} value={parameters[c.id]||'{}'} onChange={v=>setParameters(p=>({...p,[c.id]:v}))}/>:null}/>}</section>}
+      <section className="panel wb-launch"><div><h3>确认本次范围</h3><p>{product.name} · {modeLabels[mode]} · {mode==='delivery'?'交付后结束，结果为未测试':manualGate?`人工门控 · ${selectedGate?.name||'尚未选择场景'}`:`${selectedCount} 项用例`}</p>{!manualGate&&selectedCases.some(id=>cases.find(c=>c.id===id)?.code==='STREAM-RGB-DEPTH')&&<p>包含出流质量测试，请确认测试时长；默认 5 小时。</p>}{executeBasic&&!manualGate&&selectedCases.length>0&&<details><summary>查看执行顺序</summary><ol>{orderedCases.filter(c=>selectedCases.includes(c.id)).map(c=><li key={c.id}>{c.name}</li>)}</ol></details>}</div><button type="submit" className="primary-button" disabled={busy || (!developerMode&&!pointId)||!benchId||(executeBasic&&(!selectedCount||!deviceSerial||deviceScan!=='done'))||(manualGate&&(!quickOperator.trim()||!isRv1126b))||(!developerMode&&product.status!=='ready')||(!developerMode&&isRv1126b&&(benchReady?.bench_id!==benchId||!benchReady.passed))}>{busy?'正在创建…':mode==='delivery'?'开始构建并交付':mode==='full'?'开始编译、烧录并测试':manualGate?'开始当前固件人工门控':'开始测试当前固件'}</button></section>
+    </form>}
     {screen === 'round-detail' && round && <>
-      <div className="tw-heading"><div><button className="tw-back" onClick={() => setScreen('rounds')}>← Test Rounds</button><span className="panel-label">TEST-{String(round.display_number).padStart(6,'0')}</span><h2>{String(round.product_snapshot.name)} · {round.product_snapshot.developer_mode ? '开发者快速测试' : `${round.change_number}/PS${round.patchset_number}`} </h2></div><StatusPill status={round.status} label={roundStatus[round.status] || round.status} /></div>
-      {round.status==='created' && <button className="primary-button" disabled={busy} onClick={() => void perform(async()=>{await request(`/api/qa/test-rounds/${round.id}/start`,{method:'POST'});await refresh();})}>开始交付</button>}
+      {round.validation_plan_id&&<button type="button" onClick={()=>openPlan(round.validation_plan_id!)}>← 返回发布验证清单</button>}
+      <div className="tw-heading"><div><button className="tw-back" onClick={() => setScreen('rounds')}>← 测试记录</button><span className="panel-label">TEST-{String(round.display_number).padStart(6,'0')}</span><h2>{String(round.product_snapshot.name)} · {originLabels[round.origin||'manual']} </h2></div><StatusPill status={roundSyncError(round)?'blocked':round.status} label={roundLabel(round)} /></div>
+      {round.status==='created' && <button className="primary-button" disabled={busy} onClick={() => void perform(async()=>{await request(`/api/qa/test-rounds/${round.id}/start`,{method:'POST'});await refresh();})}>启动本轮任务</button>}
+      {roundSyncError(round) && <div className="run-error" role="alert"><strong>结果同步异常</strong><p>无法获取最新测试结果，正在自动重试。下方保留最近一次成功同步的快照；未完成用例的当前状态待确认。</p><p>最近成功同步：{formatDate(round.controller_result?.received_at as string)} · 最近尝试：{formatDate(round.controller_result?.checked_at as string)}</p><p>{String(round.controller_result?.transport_error || '')}</p></div>}
       {round.last_error && <div className="run-error" role="alert"><strong>流程未完成</strong><p>{round.last_error}</p></div>}
       {round.status==='remote_ready' && <div className="wb-receipt"><strong>远端文件校验通过</strong><span>JSON 与 {round.image_snapshot.length} 个镜像已交付 · {formatDate(round.delivery_result?.verified_at)}</span></div>}
-      <RoundResults key={round.id} round={round} onEvidence={setEvidenceCase} onChanged={refresh} />{evidenceCase && <BasicEvidence key={`${round.id}-${evidenceCase}`} round={round} code={evidenceCase} />}<div className="wb-round-layout"><aside className="panel"><h3>本轮固定快照</h3><Facts items={[["产品",round.product_snapshot.name],["Gerrit Project",round.gerrit_project],["提交说明",commitComment(round)],["Board Config",round.board_config],["测试台",round.bench_snapshot.name || '历史记录未保存快照'],["SSH",round.bench_snapshot.host ? `${round.bench_snapshot.user}@${round.bench_snapshot.host}:${round.bench_snapshot.port}` : '—'],["测试台任务目录",round.remote_path],["Test Cases",round.test_case_snapshot.length]]} /><Evidence value={{commit:round.commit_sha,product:round.product_snapshot}} label="完整版本与产品基线" /><Evidence value={round.test_case_snapshot} label="用例与参数快照" /></aside><div><details className="panel wb-process-details"><summary>执行过程记录 · {round.events.length} 条事件</summary><p>服务端在阶段开始、结束及收到 Controller 回报时保存事件，按序号展示。此记录用于定位流程问题。</p><div className="wb-events">{[...round.events].sort((a,b)=>a.sequence-b.sequence).map(event=><article key={event.id}><span className={`wb-event-mark ${event.status}`} /><div><header><strong>{({created:'已保存本轮配置与版本快照',checking_out:'同步并检出 Patchset',building:'执行 SDK 构建命令',packaging:'校验镜像并生成 JSON',transferring:'传输 JSON 与镜像',verifying:'远端文件校验'} as Record<string,string>)[event.event_type] || event.message}</strong><time>{formatDate(event.created_at)}</time></header><small>{({running:'进行中',succeeded:'已完成',failed:'失败',blocked:'已阻塞'} as Record<string,string>)[event.status] || event.status}{typeof event.details.finished_at==='string' && ` · 结束于 ${formatDate(event.details.finished_at)}`}</small>{Object.keys(event.details).length>0 && <Evidence value={event.details} />}</div></article>)}</div></details>
-      <section className="panel"><h3>本轮报告</h3><p>源码：{commitComment(round)} · {round.product_snapshot.developer_mode ? '开发者快速测试' : `${round.change_number}/PS${round.patchset_number}`} </p><p>自动执行结论：{roundStatus[round.status] || round.status}</p><button className="secondary-button" disabled={busy} onClick={()=>void downloadReport(round)}>{busy?'正在生成报告…':'下载完整 JSON 报告'}</button></section>{round.controller_result && <details className="panel wb-process-details"><summary>测试台 Controller · 连接与原始结果</summary><Facts items={[["阶段",round.controller_result.phase],["状态",round.controller_result.state],["说明",round.controller_result.message],["心跳",formatDate(round.controller_result.heartbeat_at as string)],["连接",round.controller_result.transport_error || '最近一次接收正常']]} /><p>{round.product_snapshot.developer_mode ? '当前固件身份验证' : '烧录后启动验证'}：{(round.product_snapshot.developer_mode ? round.controller_result.identity_verified : round.controller_result.boot_verified)===true?'已确认':'尚未确认'}</p><pre className="wb-build-log">{String(round.controller_result.log_tail || '')}</pre><Evidence value={round.controller_result} label="Controller result.json" /></details>}<details className="panel wb-process-details" open={round.status==='building'}><summary>构建证据与镜像</summary>{Boolean(round.build_result?.progress) && <><p><code>{String(round.build_result?.command || (round.build_result?.progress as Record<string,unknown>)?.command || '')}</code></p><pre className="wb-live-log" aria-label="轮次构建实时日志">{String(round.build_result?.stdout_tail || (round.build_result?.progress as Record<string,unknown>)?.logs || '')}</pre></>}{round.build_result ? <><Facts items={[["命令退出码",round.build_result.exit_code],["产物校验",round.build_result.artifact_validation_passed===true?'通过':round.build_result.artifact_validation_passed===false?'未通过':'待校验'],["构建结果",round.build_result.passed===true?'通过':round.build_result.passed===false?'未通过':'进行中']]} /><Evidence value={round.build_result} label="命令、输出和退出码" /></> : <p>{round.product_snapshot.developer_mode ? '开发者模式已跳过构建与烧录。' : '等待服务端执行构建。'}</p>}{round.image_snapshot.map((item,index)=><Facts key={index} items={[["镜像",item.filename],["字节数",item.size_bytes],["SHA-256",item.sha256]]} />)}</details>
-      {round.generated_config && <section className="panel"><h3>交付文件</h3><Evidence value={round.generated_config} label="test-run.json" />{round.delivery_result && <Evidence value={round.delivery_result} label="远端文件摘要校验结果" />}<p>{round.product_snapshot.execute_test_cases ? "本轮包含基础测试；执行结果和协议证据见上方。" : "本轮用例仅保存为计划，未执行测试。"}</p></section>}</div></div>
+      {round.product_snapshot.execute_test_cases !== true && <section className="panel wb-receipt"><strong>{round.status==='remote_ready'?'交付完成 · 未测试':'构建交付任务'}</strong><p>本轮仅构建和交付镜像，不执行设备用例。</p></section>}<RoundResults key={round.id} round={round} onEvidence={setEvidenceCase} onChanged={refresh} />{evidenceCase && <BasicEvidence key={`${round.id}-${evidenceCase}`} round={round} code={evidenceCase} />}<div className="wb-round-layout"><aside className="panel"><h3>本轮固定快照</h3><Facts items={[["产品",round.product_snapshot.name],[isPrebuiltRound(round)?"175 镜像目录":"Gerrit Project",isPrebuiltRound(round)?firmwareSource(round).image_directory:round.gerrit_project],[isPrebuiltRound(round)?"预期固件身份":"提交说明",commitComment(round)],["Board Config",round.board_config],["测试台",round.bench_snapshot.name || '历史记录未保存快照'],["SSH",round.bench_snapshot.host ? `${round.bench_snapshot.user}@${round.bench_snapshot.host}:${round.bench_snapshot.port}` : '—'],["测试台任务目录",round.remote_path],["Test Cases",round.test_case_snapshot.length]]} /><Evidence value={{commit:round.commit_sha,product:round.product_snapshot}} label="完整版本与产品基线" /><Evidence value={round.test_case_snapshot} label="用例与参数快照" /></aside><div><details className="panel wb-process-details"><summary>执行过程记录 · {round.events.length} 条事件</summary><p>服务端在阶段开始、结束及收到 Controller 回报时保存事件，按序号展示。此记录用于定位流程问题。</p><div className="wb-events">{[...round.events].sort((a,b)=>a.sequence-b.sequence).map(event=><article key={event.id}><span className={`wb-event-mark ${event.status}`} /><div><header><strong>{({created:'已保存本轮配置与版本快照',checking_out:'同步并检出 Patchset',building:'执行 SDK 构建命令',packaging:'校验镜像并生成 JSON',transferring:'传输 JSON 与镜像',verifying:'远端文件校验'} as Record<string,string>)[event.event_type] || event.message}</strong><time>{formatDate(event.created_at)}</time></header><small>{({running:'进行中',succeeded:'已完成',failed:'失败',blocked:'已阻塞'} as Record<string,string>)[event.status] || event.status}{typeof event.details.finished_at==='string' && ` · 结束于 ${formatDate(event.details.finished_at)}`}</small>{Object.keys(event.details).length>0 && <Evidence value={event.details} />}</div></article>)}</div></details>
+      <section className="panel"><h3>本轮报告</h3><p>固件来源：{roundSource(round)}</p><p>自动执行结论：{roundLabel(round)}</p><button className="secondary-button" disabled={busy} onClick={()=>void downloadReport(round)}>{busy?'正在生成报告…':'下载完整 JSON 报告'}</button></section>{round.controller_result && <details className="panel wb-process-details"><summary>测试台 Controller · 连接与原始结果</summary><Facts items={[["阶段",round.controller_result.phase],["状态",round.controller_result.state],["说明",round.controller_result.message],["心跳",formatDate(round.controller_result.heartbeat_at as string)],["连接",round.controller_result.transport_error || '最近一次接收正常']]} /><p>{round.product_snapshot.developer_mode ? '当前固件身份验证' : '烧录后启动验证'}：{(round.product_snapshot.developer_mode ? round.controller_result.identity_verified : round.controller_result.boot_verified)===true?'已确认':'尚未确认'}</p><pre className="wb-build-log">{String(round.controller_result.log_tail || '')}</pre><Evidence value={round.controller_result} label="Controller result.json" /></details>}<details className="panel wb-process-details" open={round.status==='building'}><summary>{isPrebuiltRound(round)?'导入校验与镜像':'构建证据与镜像'}</summary>{Boolean(round.build_result?.progress) && <><p><code>{String(round.build_result?.command || (round.build_result?.progress as Record<string,unknown>)?.command || '')}</code></p><pre className="wb-live-log" aria-label="轮次构建实时日志">{String(round.build_result?.stdout_tail || (round.build_result?.progress as Record<string,unknown>)?.logs || '')}</pre></>}{isPrebuiltRound(round)?<><p>本轮使用 175 上导入并保存的镜像，未执行编译。</p><Facts items={[["来源目录",firmwareSource(round).image_directory],["导入人",firmwareSource(round).operator],["导入时间",formatDate(firmwareSource(round).imported_at)],["导入镜像校验",firmwareSource(round).validation?.passed===true?'通过':'待确认'],["预期身份",firmwareIdentity(round).value]]}/><Evidence value={firmwareSource(round)} label="导入来源与镜像校验证据"/></>:round.build_result ? <><Facts items={[["命令退出码",round.build_result.exit_code],["产物校验",round.build_result.artifact_validation_passed===true?'通过':round.build_result.artifact_validation_passed===false?'未通过':'待校验'],["构建结果",round.build_result.passed===true?'通过':round.build_result.passed===false?'未通过':'进行中']]} /><Evidence value={round.build_result} label="命令、输出和退出码" /></> : <p>{round.product_snapshot.developer_mode ? '开发者模式已跳过构建与烧录。' : '等待服务端执行构建。'}</p>}{round.image_snapshot.map((item,index)=><Facts key={index} items={[["镜像",item.filename],["字节数",item.size_bytes],["SHA-256",item.sha256]]} />)}</details>
+      {round.generated_config && <section className="panel"><h3>交付文件</h3><Evidence value={round.generated_config} label="test-run.json" />{round.delivery_result && <Evidence value={round.delivery_result} label="远端文件摘要校验结果" />}<p>{round.product_snapshot.execute_test_cases ? "本轮执行结果和协议证据见上方。" : "本轮仅交付文件，未执行测试。"}</p></section>}</div></div>
     </>}
-    {screen === 'cases' && <><div className="tw-heading"><div><h2>用例库</h2><p>场景覆盖计划与已接入执行用例分开显示。每轮固定定义、工具版本、参数和判定阈值。</p></div><button disabled={busy} onClick={()=>void perform(async()=>{const result=await request<{added:string[]}>('/api/qa/basic-case-definitions/install',{method:'POST'});await refresh();setNotice(result.added.length?`已加入 ${result.added.length} 个内置用例。`:'内置用例已齐全，未重复添加。');})}>同步内置用例</button></div><ScenarioCatalog /><h3>已登记执行用例</h3><div className="tw-case-grid">{orderedCases.map(item=><article className="panel" key={item.id}><header><strong>{item.code}</strong><StatusPill status={item.risk_level} label={riskLabels[item.risk_level]} /></header><h3>{item.name}</h3><p>{item.description}</p><p>{basicDefinitions.some(d=>d.id===item.code)?'可执行 · v1.0.0':'尚未接入执行'}</p>{(()=>{const latest=rounds.find(r=>Array.isArray(r.controller_result?.cases) && (r.controller_result!.cases as {id:string;outcome?:string}[]).some(c=>c.id===item.id && c.outcome));const outcome=latest && (latest.controller_result!.cases as {id:string;outcome?:string}[]).find(c=>c.id===item.id)?.outcome;return latest?<p>最近实测：{outcome==='passed'?'PASS':outcome==='failed'?'FAIL':'ERROR'} · TEST-{String(latest.display_number).padStart(6,'0')}<button onClick={()=>openRound(latest)}>查看该轮证据</button></p>:<p>尚无实测结果</p>;})()}<code>{item.command}</code>{basicDefinitions.find(d=>d.id===item.code) ? <Evidence value={basicDefinitions.find(d=>d.id===item.code)} label="用例定义、协议入口与测试文件" /> : <p>执行适配器未接入</p>}<label>所属 set<select value={item.category} disabled={busy} onChange={event => {const category=event.target.value; void perform(async () => {await request(`/api/qa/test-cases/${item.id}/category`, {method:'PATCH', body:JSON.stringify({category})}); await refresh();});}}><option value="basic">基本功能 set</option><option value="special">特殊场景 set</option></select></label><small>预期 exit {item.expected_exit_code} · {item.timeout_seconds}s</small></article>)}</div>{!cases.length && <p className="quiet-row">暂无 Test Case。</p>}</>}
+    {screen === 'cases' && <>
+      <div className="tw-heading"><div><h2>用例库</h2><p>管理已接入的自动执行与人工门控用例；具体执行结果见测试记录或发布验证。</p></div><button disabled={busy} onClick={()=>void perform(async()=>{const result=await request<{added:string[]}>('/api/qa/basic-case-definitions/install',{method:'POST'});await refresh();setNotice(result.added.length?`已加入 ${result.added.length} 个内置用例。`:'内置用例已齐全，未重复添加。');})}>同步内置用例</button></div>
+      <h3>已接入用例 · {orderedCases.length} 项</h3>
+      <p className="wb-case-catalog-counts">自动执行 {orderedCases.filter(item=>basicDefinitions.some(d=>d.id===item.code)).length} 项 · 人工门控 {orderedCases.filter(item=>specialDefinitions.some(d=>d.code===item.code)).length} 项</p>
+      <div className="tw-case-grid">{orderedCases.map(item=>{
+        const special=specialDefinitions.find(d=>d.code===item.code);
+        const basic=basicDefinitions.find(d=>d.id===item.code);
+        const latestSpecial=specialRuns.find(run=>run.scenario_code===item.code);
+        const latestRound=rounds.find(r=>Array.isArray(r.controller_result?.cases)&&(r.controller_result!.cases as {id:string;outcome?:string}[]).some(c=>c.id===item.id&&c.outcome));
+        const outcome=latestRound&&(latestRound.controller_result!.cases as {id:string;outcome?:string}[]).find(c=>c.id===item.id)?.outcome;
+        return <article className="panel" key={item.id}>
+          <header><strong>{item.code}</strong><StatusPill status={item.risk_level} label={riskLabels[item.risk_level]} /></header>
+          <h3>{item.name}</h3><p>{item.description}</p>
+          <p>{special?'特殊场景 · 人工门控 · 已接入':caseGroup(item.code)+' · '+(basic?'自动执行 · 已接入':'尚未接入执行')}</p>
+          {special?<><p>{special.steps.length} 个门控步骤 · 定义版本 {special.version}</p><button type="button" onClick={()=>openSpecial(undefined,item.code)}>准备执行此场景 →</button>
+            {latestSpecial?<p>最近测试：{({preparing_firmware:'准备候选固件',awaiting_operator:'等待操作',running:'执行中',passed:'通过',failed:'失败',blocked:'阻塞',interrupted:'中断',cancelled:'已取消',cancelling:'正在停止'} as Record<string,string>)[latestSpecial.status]||latestSpecial.status} · {formatDate(latestSpecial.created_at)}<button type="button" onClick={()=>openSpecial(latestSpecial.id)}>查看流程与证据</button></p>:<p>尚无实测结果</p>}
+            <details><summary>流程定义与记录要求</summary><ol>{special.steps.map(step=><li key={step.id}><strong>{step.title}</strong><p>{step.instruction}</p><small>记录：{step.records.join('；')}</small></li>)}</ol><Evidence value={special} label="查看完整门控定义" /></details>
+          </>:<>{latestRound?<p>最近实测：{outcome==='passed'?'PASS':outcome==='failed'?'FAIL':'ERROR'} · TEST-{String(latestRound.display_number).padStart(6,'0')}<button onClick={()=>openRound(latestRound)}>查看该轮证据</button></p>:<p>尚无实测结果</p>}
+            <details><summary>定义与管理</summary><code>{item.command}</code>{basic?<Evidence value={basic} label="用例定义、协议入口与测试文件" />:<p>执行适配器未接入</p>}
+              <label>所属 set<select value={item.category} disabled={busy} onChange={event=>{const category=event.target.value;void perform(async()=>{await request(`/api/qa/test-cases/${item.id}/category`,{method:'PATCH',body:JSON.stringify({category})});await refresh();});}}><option value="basic">基本功能 set</option><option value="special">特殊场景 set</option></select></label><small>预期 exit {item.expected_exit_code} · {item.timeout_seconds}s</small>
+            </details>
+          </>}
+        </article>;
+      })}</div>{!cases.length&&<p className="quiet-row">暂无 Test Case。</p>}
+      {definitionsLoaded&&<PendingScenarios implementedCodes={new Set([...basicDefinitions.map(item=>item.id),...specialDefinitions.map(item=>item.code)])} />}
+    </>}
     {screen === 'benches' && <><div className="tw-heading"><div><h2>测试台节点</h2><p>175 服务端使用已配置的 SSH 密钥连接节点。</p></div><button className="primary-button" onClick={()=>setDialog('bench')}>＋ 登记节点</button></div><div className="tw-bench-grid">{benches.map(item=><article className="panel" key={item.id}><header><h3>{item.name}</h3><StatusPill status={item.enabled?'ready':'blocked'} label={item.enabled?'已启用':'已停用'} /></header><Facts items={[["SSH",`${item.user}@${item.host}:${item.port}`],["测试台根目录",item.remote_root]]} /><BenchReadiness benchId={item.id} /></article>)}</div>{!benches.length && <p className="quiet-row">暂无测试台节点。</p>}</>}
     {dialog && <div className="dialog-backdrop"><section className="dialog qa-dialog" role="dialog" aria-modal="true" aria-labelledby="wb-dialog-title"><div className="dialog-heading"><h2 id="wb-dialog-title">{dialog==='point'?'登记 Patchset':dialog==='bench'?'登记测试台':'新建 Test Case'}</h2><button aria-label="关闭" disabled={busy} onClick={()=>setDialog(null)}>×</button></div>{error && <p role="alert" className="tw-warning">{error}</p>}<form onSubmit={saveDialog}>
-      {dialog==='point' ? product && <GerritPatchsetFields product={product} onReady={setPointReady} busy={busy} /> : dialog==='bench' ? <><label>节点名称<input name="name" required /></label><label>主机<input name="host" required /></label><label>SSH 端口<input name="port" type="number" min="1" max="65535" defaultValue="22" required /></label><label>用户名<input name="user" required /></label><label>测试台根目录<input name="remote_root" required placeholder="/home/linaro/develop-hub-qa" /></label></> : <><label>用例编号<input name="code" required /></label><label>名称<input name="name" required /></label><label>说明<textarea name="description" required /></label><label>命令<textarea name="command" required /></label><label>所属 set<select name="category"><option value="basic">基本功能 set</option><option value="special">特殊场景 set</option></select></label><label>风险级别<select name="risk_level"><option value="read_only">只读</option><option value="state_change">状态变更</option><option value="firmware_write">固件写入</option></select></label><div className="form-columns"><label>预期退出码<input name="expected_exit_code" type="number" defaultValue="0" required /></label><label>超时（秒）<input name="timeout_seconds" type="number" min="1" defaultValue="300" required /></label></div></>}
+      {dialog==='point' ? product && <GerritPatchsetFields product={product} onReady={setPointReady} busy={busy} /> : dialog==='bench' ? <><label>节点名称<input name="name" required /></label><label>主机<input name="host" required /></label><label>SSH 端口<input name="port" type="number" min="1" max="65535" defaultValue="22" required /></label><label>用户名<input name="user" required /></label><label>测试台根目录<input name="remote_root" required placeholder="/home/linaro/develop-hub-qa" /></label></> : null}
       <div className="form-actions"><button type="button" disabled={busy} onClick={()=>setDialog(null)}>取消</button><button type="submit" className="approve" disabled={busy || (dialog==='point' && !pointReady)}>{busy?'正在保存…':'保存'}</button></div></form></section></div>}
   </section>;
 }

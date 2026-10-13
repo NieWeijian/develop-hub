@@ -20,6 +20,7 @@ from .test_workbench import TestRoundWorkflow
 from .test_workbench_api import router as test_workbench_router
 from .workflow import CodingWorkflow
 from .testing_platform import router as testing_platform_router, ScheduleEngine
+from .special_scenarios import router as special_router, SpecialWorkflow
 
 
 @asynccontextmanager
@@ -40,6 +41,9 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     test_round_workflow = TestRoundWorkflow(settings)
     app.state.test_round_workflow = test_round_workflow
     await test_round_workflow.recover_interrupted_rounds()
+    special_workflow = SpecialWorkflow(test_round_workflow)
+    app.state.special_workflow = special_workflow
+    await special_workflow.recover()
     scheduler = ScheduleEngine(test_round_workflow)
     app.state.test_scheduler = scheduler
     scheduler.start()
@@ -47,6 +51,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         yield
     finally:
         await scheduler.stop()
+        await special_workflow.stop()
 
 
 app = FastAPI(
@@ -67,6 +72,7 @@ app.include_router(qa_router)
 app.include_router(qa_demo_router)
 app.include_router(test_workbench_router)
 app.include_router(testing_platform_router)
+app.include_router(special_router)
 
 
 @app.get("/")

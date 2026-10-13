@@ -332,6 +332,9 @@ async def bench_readiness(bench_id: str, execution: Literal['full','delivery'] =
     bench = db.get(TestBench, bench_id)
     if not bench or not bench.enabled:
         raise HTTPException(status_code=404, detail='测试台不存在或已停用')
+    from .testing_platform import bench_busy
+    if bench_busy(db, bench_id):
+        raise HTTPException(409, '测试台已被运行占用，暂不执行额外硬件检查')
     return await inspect_bench(workflow, bench, execution == 'full')
 
 
@@ -342,6 +345,9 @@ async def bench_devices(bench_id: str, chip: str = "RK3572", db: Session = Depen
     bench = db.get(TestBench, bench_id)
     if not bench or not bench.enabled:
         raise HTTPException(status_code=404, detail="Bench not found")
+    from .testing_platform import bench_busy
+    if bench_busy(db, bench_id):
+        raise HTTPException(409, '测试台已被运行占用；请使用该运行冻结的设备信息')
     if chip == 'RV1126B':
         import json
         result = await workflow._remote(bench, 'python3 ' + shlex.quote(bench.remote_root + '/rv1126b.py') + ' --list', 45)
@@ -389,6 +395,9 @@ async def create_round_internal(payload, db, workflow, *, source=None, schedule_
         item.id: item
         for item in db.scalars(select(TestCase).where(TestCase.id.in_(payload.test_case_ids), TestCase.enabled.is_(True)))
     }
+    from .special_catalog import CODES as GATED_CODES
+    if any(case.code in GATED_CODES for case in cases_by_id.values()):
+        raise HTTPException(422,'人工门控用例须从特殊场景或发布清单入口执行')
     if len(cases_by_id) != len(payload.test_case_ids):
         raise HTTPException(status_code=422, detail="One or more Test Cases are missing or disabled")
     if set(payload.test_case_parameters) - set(payload.test_case_ids):
@@ -475,8 +484,7 @@ async def create_round_internal(payload, db, workflow, *, source=None, schedule_
             from .basic_cases import ROOT, sha
             product_snapshot['flash'] = {'worker_sha256': sha(ROOT/'worker.py'), 'adapter_sha256': sha(ROOT/'rv1126b.py'),
                 'enabled': True, 'adapter': 'rv1126b-dfu-v1', 'target_chip': 'RV1126B',
-                'device_serial': payload.device_serial, 'usb_path': matches[0]['usb_path'],
-                'allow_wear_limit_override': payload.allow_wear_limit_override}
+                'device_serial': payload.device_serial, 'usb_path': matches[0]['usb_path']}
         elif 'rk3572' in product.board_config.lower():
             product_snapshot['flash'] = {'enabled': True, 'target_chip': 'RK3572', 'device_serial': payload.device_serial}
         else:
@@ -535,7 +543,8 @@ def install_basic_cases(db: Session = Depends(get_db)) -> dict:
     from .seed_basic_cases import install_missing
     added = install_missing(db)
     db.commit()
-    return {'added': added, 'available': list(CODES)}
+    from .special_catalog import CODES as SPECIAL_CODES
+    return {'added': added, 'available': [*ACTIVE_CODES, *SPECIAL_CODES]}
 
 
 @router.get('/basic-case-definitions')

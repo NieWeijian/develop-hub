@@ -1,0 +1,18 @@
+[Unit]
+Description=Develop Hub 175 Web Console
+After=network-online.target develop-hub-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/develop-hub/web
+EnvironmentFile=-%h/develop-hub/.env
+ExecStart=%h/develop-hub/scripts/run-web.sh
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

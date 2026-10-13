@@ -10,11 +10,11 @@
   "parameters": {},
   "assertions": [
     "枚举 archived，下载全部 gzip 文件，校验长度及 gzip CRC",
-    "无归档或存在超出 60000 字节的文件时阻塞"
+    "无归档时阻塞；存在归档时实际执行下载并记录工具返回"
   ],
   "required_capabilities": [
     "cli.file-list.v1",
     "cli.file-get.v1"
   ],
-  "revision": "2026-09-29-factory-storage"
+  "revision": "2026-10-10-log-download-response"
 }

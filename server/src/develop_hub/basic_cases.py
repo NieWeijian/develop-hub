@@ -32,6 +32,7 @@ def definition(code):
         data['support_sha256']={name:sha(ROOT/name) for name in ('factory_runtime.py','switch_runtime.py','frame_images.py','host-capture','rv1126b.py')}
     if code=='STREAM-RGB-DEPTH':
         data['support_sha256'].update({name:sha(ROOT/name) for name in ('stream_quality.py','uvc_host_stream-metrics')})
+    data.setdefault('support_sha256', {})['firmware_identity.py'] = sha(ROOT/'firmware_identity.py')
     return data
 
 

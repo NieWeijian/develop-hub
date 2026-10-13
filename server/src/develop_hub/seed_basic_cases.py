@@ -19,6 +19,8 @@ def seed():
             case.enabled=True
         for case in db.scalars(select(TestCase).where(TestCase.code.in_(RETIRED_CODES))):
             case.enabled=False
+        from .special_catalog import install_missing as install_special
+        install_special(db)
         db.commit()
 if __name__=='__main__': seed()
 
@@ -39,5 +41,7 @@ def install_missing(db):
             risk_level=TestCaseRisk.READ_ONLY if d['risk_level']=='read_only' else TestCaseRisk.STATE_CHANGE,
             enabled=True))
         added.append(code)
+    from .special_catalog import install_missing as install_special
+    added.extend(install_special(db))
     db.flush()
     return added
