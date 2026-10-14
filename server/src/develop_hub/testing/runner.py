@@ -59,6 +59,8 @@ class TestingRunner:
             with SessionLocal() as db:
                 row = require(db, Device, identity)
                 device = view(row)
+                from .safety import require_simulation
+                require_simulation(device['node'])
                 active = list(db.scalars(select(TestRun).where(TestRun.state.in_(ACTIVE))))
                 if any((r.result or {}).get('device_claimed') and resource_key(r.request_snapshot.get('device', {})) == resource_key(device) for r in active):
                     fail(409, 'device_busy', '执行节点正在被测试占用，请等待运行结束')
@@ -208,6 +210,8 @@ class TestingRunner:
             return asset.id
 
     async def _claim(self, run_id, device):
+        from .safety import require_simulation
+        require_simulation(device['node'])
         while True:
             self._check_cancel(run_id)
             async with self.claim_lock:
@@ -330,6 +334,9 @@ class TestingRunner:
                 result = deepcopy(run.result or {})
                 recovery = run.recovery
             self._check_cancel(run_id)
+            from .safety import require_simulation
+            if snapshot.get('device'):
+                require_simulation(snapshot['device']['node'])
             self._update(run_id, state='preparing', message='正在准备固定输入')
             folder = self.root / 'runs' / run_id
             folder.mkdir(parents=True, exist_ok=True)

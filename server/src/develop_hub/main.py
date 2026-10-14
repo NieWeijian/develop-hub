@@ -31,6 +31,8 @@ LEGACY_ENABLED = os.getenv('DEVELOP_HUB_LEGACY_ENABLED', 'false').lower() == 'tr
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+    from .testing.safety import validate_isolated_paths
+    validate_isolated_paths(settings)
     settings.ensure_directories()
     if settings.auto_create_schema:
         initialize_database()
@@ -95,7 +97,8 @@ if LEGACY_ENABLED:
 else:
     @app.get('/api/health')
     def testing_health():
-        return {'status': 'ok', 'service': 'rk-testing', 'legacy_enabled': False}
+        from .testing.safety import simulation_only
+        return {'status': 'ok', 'service': 'rk-testing', 'legacy_enabled': False, 'environment': settings.environment, 'device_mode': 'simulation-only' if simulation_only() else 'enabled'}
 
 
 @app.get("/")

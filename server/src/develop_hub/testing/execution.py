@@ -53,6 +53,8 @@ def ssh_args(node: dict, scp: bool = False) -> list[str]:
 
 
 async def execute_step(node: dict, folder: Path, job: dict, package: dict | None = None, firmware: dict | None = None) -> dict:
+    from .safety import require_simulation
+    require_simulation(node)
     folder.mkdir(parents=True, exist_ok=True)
     if (folder / 'job.json').exists():
         raise RuntimeError('执行步骤已经创建，禁止自动重复下发')

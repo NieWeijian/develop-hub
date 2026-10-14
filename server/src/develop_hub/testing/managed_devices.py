@@ -35,6 +35,8 @@ def catalog() -> list[dict]:
 
 
 def bind(station_id: str, serial: str, product) -> dict:
+    from .safety import require_simulation
+    require_simulation({'kind': 'ssh'})
     station = stations().get(station_id)
     if station is None:
         fail(422, 'station_unavailable', '请选择已部署的测试台')

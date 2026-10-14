@@ -59,6 +59,9 @@ def digest(value: Any) -> str:
 
 
 def validate_node(node: dict[str, Any], *, build: bool = False) -> None:
+    if not build:
+        from .safety import require_simulation
+        require_simulation(node)
     if not isinstance(node.get("kind"), str) or node.get("kind") not in {"local", "simulation", "ssh"}:
         fail(422, "invalid_node", "节点类型必须是 local、simulation 或 ssh")
     if build and node.get("kind") != "local":
