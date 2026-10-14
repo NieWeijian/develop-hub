@@ -48,7 +48,7 @@ class Settings:
         root = Path(os.getenv("DEVELOP_HUB_ROOT", Path.cwd())).resolve()
         database_url = os.getenv(
             "DEVELOP_HUB_DATABASE_URL",
-            f"sqlite:///{root / 'var' / 'develop-hub.db'}",
+            f"sqlite:///{root / 'var' / 'rk-testing.db'}",
         )
         origins = tuple(
             item.strip()

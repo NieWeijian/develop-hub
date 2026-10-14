@@ -1,0 +1,43 @@
+{
+  "package_schema": "rk-case-package/1",
+  "package_id": "rk.uvc-version",
+  "package_version": "1.0.0",
+  "name": "RK UVC 固件版本检查",
+  "license": "MIT",
+  "cases": [
+    {
+      "case_id": "rk.uvc-version.matches",
+      "case_version": "1.0.0",
+      "name": "读取并核对固件版本",
+      "mode": "automated",
+      "test_scope": "读取已绑定模组的 CPU 序列号与设备自报版本，核对预期版本令牌；不证明固件二进制与某个镜像相同",
+      "requirements": {"capabilities": ["uvc.control.version.v1"]},
+      "effects": "read_only",
+      "timeout_seconds": 90,
+      "parameters_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "设备版本输出中的完整版本令牌，例如 factory-V2.1.0；无默认值，需要明确填写"
+          }
+        },
+        "required": ["expected_version"]
+      },
+      "parameter_ui": {
+        "expected_version": {"label": "预期固件版本", "help": "精确匹配版本令牌；factory-V2.1 不会匹配 factory-V2.10", "order": 1}
+      },
+      "implementation": {
+        "runtime_profile": "python3-case",
+        "entrypoint": "run.py",
+        "input_schema": "rk-case-input/1",
+        "result_schema": "rk-case-result/1"
+      },
+      "required_assertions": ["tool-integrity", "device-identity", "firmware-version"],
+      "recovery": {"required": false}
+    }
+  ]
+}

@@ -11,3 +11,5 @@ os.environ["DEVELOP_HUB_ARTIFACT_ROOT"] = str(_test_root / "artifacts")
 os.environ["DEVELOP_HUB_WORKTREE_ROOT"] = str(_test_root / "worktrees")
 os.environ["DEVELOP_HUB_QA_PLUGIN_ROOT"] = str(_test_root / "qa-plugins")
 os.environ["DEVELOP_HUB_AUTO_CREATE_SCHEMA"] = "true"
+# Legacy unit tests exercise retained optional modules, never production tasks.
+os.environ["DEVELOP_HUB_LEGACY_ENABLED"] = "true"

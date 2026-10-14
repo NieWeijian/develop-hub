@@ -8,6 +8,7 @@ from sqlalchemy import engine_from_config, pool
 from develop_hub.config import settings
 from develop_hub.db import Base
 from develop_hub import models  # noqa: F401
+from develop_hub.testing import models as testing_models  # noqa: F401
 
 
 config = context.config

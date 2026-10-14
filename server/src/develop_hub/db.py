@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+import os
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -37,5 +38,7 @@ def get_db() -> Generator[Session, None, None]:
 
 def initialize_database() -> None:
     from . import models  # noqa: F401
+    from .testing import models as testing_models  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
+    tables = None if os.getenv('DEVELOP_HUB_LEGACY_ENABLED', 'false').lower() == 'true' else [t for t in Base.metadata.sorted_tables if t.name.startswith('testing_')]
+    Base.metadata.create_all(bind=engine, tables=tables)
