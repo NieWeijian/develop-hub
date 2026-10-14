@@ -7,6 +7,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import __version__
 from .api import router
 from .codex_runner import CodexRunner
 from .config import settings
@@ -74,7 +75,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
 app = FastAPI(
     title="Develop Hub API",
-    version="0.1.0",
+    version=__version__,
     description="Configurable testing plans for Rockchip devices and firmware",
     lifespan=lifespan,
 )
