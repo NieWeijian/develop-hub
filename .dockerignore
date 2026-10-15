@@ -22,3 +22,10 @@
 **/*.ppk
 **/*.tar.gz
 **/*.tsbuildinfo
+**/.cache
+**/runtime-cache
+**/packages
+**/*.whl
+**/*.bundle
+**/*.plan.json
+**/*.deployment.json

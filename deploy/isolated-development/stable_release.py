@@ -88,6 +88,11 @@ def setup_native(path, python):
     if libc != 'glibc' or tuple(int(v) for v in version.split('.')[:2]) < (2, 35):
         raise RuntimeError('Native production package requires glibc 2.35+')
     venv = path / '.venv'
+    config = venv / 'pyvenv.cfg'
+    if config.exists():
+        values = dict(line.split(' = ', 1) for line in config.read_text().splitlines() if ' = ' in line)
+        if values.get('home') != str(Path(python).resolve().parent):
+            venv.rename(path / ('.venv-previous-' + uuid.uuid4().hex[:8]))
     if not venv.exists():
         hub.run([python, '-m', 'venv', '--without-pip', venv])
     pip_wheel = next((path / 'runtime/wheels').glob('pip-*.whl'))
@@ -317,6 +322,8 @@ def main(argv=None):
         gate(args, rollback=args.action == 'rollback')
         if args.restore_database and not args.accept_data_loss:
             raise ValueError('Database restore requires explicit --accept-data-loss')
+        if args.action == 'apply' and args.plan is None or args.action == 'rollback' and args.record is None:
+            raise ValueError('Select an explicit --plan or --record')
         with hub.locked(hub.validate_root(args.control_root)):
             if args.action == 'apply':
                 apply(args.plan, args.control_root, args.python)

@@ -108,7 +108,7 @@ def export_source(repo, ref, destination):
 
 
 def image_for(source, log):
-    inputs = ['deploy/isolated-development/Dockerfile', 'deploy/isolated-development/toolchain.lock.json', 'deploy/isolated-development/fetch-node.py', 'deploy/isolated-development/install-os.py', 'deploy/isolated-development/third_party/repo', 'requirements/development-linux-amd64.lock', 'web/package.json', 'web/package-lock.json']
+    inputs = ['deploy/isolated-development/Dockerfile', 'deploy/isolated-development/toolchain.lock.json', 'deploy/isolated-development/fetch-node.py', 'deploy/isolated-development/install-os.py', 'deploy/isolated-development/third_party/repo', 'requirements/development-linux-amd64.lock', 'requirements/production-cp310-linux-amd64.lock', 'web/package.json', 'web/package-lock.json']
     key = hashlib.sha256(''.join(sha(source / name) for name in inputs).encode()).hexdigest()
     image = 'develop-hub-toolchain:' + key[:20]
     exists = subprocess.run(['docker', 'image', 'inspect', image], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
@@ -372,6 +372,8 @@ def main(argv=None):
     parser.add_argument('--name')
     parser.add_argument('--no-gateways', action='store_true', help='For CI/isolated verification without a user systemd session')
     args = parser.parse_args(argv)
+    if args.action in ['bootstrap', 'deploy', 'prepare'] and args.ref == 'HEAD' and run(['git', '-C', REPO, 'status', '--porcelain'], capture=True):
+        raise ValueError('Commit or stash working-tree changes first, or explicitly select a different committed --ref')
     root = validate_root(args.root)
     config = config_for(root, args)
     with locked(root):

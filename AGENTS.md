@@ -35,3 +35,14 @@ an empty testing database, and simulation-only devices. Keep these restrictions.
 Do not mount production directories, SSH identities, hardware, or the Docker socket.
 Do not provision or reuse production test stations. Real hardware work requires a
 separate authorized test station. SDK code edits must use SSH, never PowerShell/SMB.
+
+
+## Reproducible deployment workflow
+
+Use `deploy/isolated-development/hub.py` or `scripts/bootstrap-dev.py` from committed source.
+See `docs/deployment-rebuild.md`. Application containers must remain network=none.
+Do not copy host Node/Python/npm dependencies into builds. Keep both Python hash locks,
+frontend package-lock, toolchain lock, Docker recipe and tests together in commits.
+Normal development only prepares or activates development releases. Stable apply and
+rollback commands require direct user authorization plus a confirmed maintenance window.
+Never invoke their approval switches as part of CI or ordinary development.

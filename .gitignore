@@ -51,3 +51,15 @@ id_ed25519*
 # Keep reviewed credential-free templates.
 !*.env.example
 !.env.*.example
+
+# Release artifacts and private deployment records
+/runtime-cache/
+/packages/
+*.whl
+*.bundle
+*.plan.json
+*.deployment.json
+/active.json
+/previous.json
+/deployment.json
+/operation.lock

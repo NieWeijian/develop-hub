@@ -1,0 +1,34 @@
+name: Rebuild and verify from committed source
+on:
+  push:
+    branches: [main, codex/isolated-development]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rebuild-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  linux-amd64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Audit tracked files
+        run: python3 deploy/isolated-development/audit.py
+      - name: Rebuild, test, and boot isolated candidate
+        run: python3 scripts/bootstrap-dev.py bootstrap --root "$RUNNER_TEMP/hub-check" --no-gateways --ref HEAD --web-port 3035 --api-port 8205
+      - name: Upload verification records
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: deployment-verification
+          path: |
+            ${{ runner.temp }}/hub-check/releases/*/manifest.json
+            ${{ runner.temp }}/hub-check/releases/*/image-build.log
+            ${{ runner.temp }}/hub-check/releases/*/frontend.log
+            ${{ runner.temp }}/hub-check/releases/*/backend.log
+          if-no-files-found: ignore
