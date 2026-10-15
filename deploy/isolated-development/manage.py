@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Compatibility entry point; implementation is versioned in hub.py."""
+"""Compatibility aliases for the versioned deployment controller."""
+import os
 from pathlib import Path
-import runpy
-runpy.run_path(str(Path(__file__).with_name('hub.py')), run_name='__main__')
+import sys
+arguments = sys.argv[1:] or ['status']
+aliases = {'build': 'prepare', 'test': 'prepare', 'restart': 'deploy', 'start': 'deploy'}
+arguments[0] = aliases.get(arguments[0], arguments[0])
+if '--root' not in arguments:
+    arguments += ['--root', str(Path.home() / 'develop-hub-dev')]
+os.execv(sys.executable, [sys.executable, str(Path(__file__).with_name('hub.py')), *arguments])
