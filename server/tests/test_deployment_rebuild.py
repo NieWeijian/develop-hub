@@ -243,3 +243,9 @@ def test_corrupted_database_restore_preserves_failed_file_and_recovers_backup(tm
     stable.rollback(file, tmp_path, restore_database=True)
     assert hub.db_version(database) == ['old']
     assert (tmp_path / 'test-data-before-restore/live.db').read_bytes() == b'corrupted-database'
+
+
+def test_production_runtime_keeps_candidate_api_address_and_profile(tmp_path):
+    records = stable.native_records(tmp_path, {'commit': 'a' * 40, 'api_url': 'https://tests.example/api-root'}, {'api': {'env': {}}, 'web': {'env': {'NEXT_PUBLIC_DEVELOP_HUB_ENV': 'development', 'NEXT_PUBLIC_DEVELOP_HUB_API_URL': 'http://localhost:8195'}}}, 8185, 3015)
+    assert records['web']['env']['NEXT_PUBLIC_DEVELOP_HUB_ENV'] == 'production'
+    assert records['web']['env']['NEXT_PUBLIC_DEVELOP_HUB_API_URL'] == 'https://tests.example/api-root'

@@ -171,6 +171,7 @@ def native_records(package_path, manifest, old, api_port, web_port):
     env.update(DEVELOP_HUB_ROOT=str(package_path), PYTHONPATH=str(package_path / 'server/src'), DEVELOP_HUB_AUTO_CREATE_SCHEMA='false', DEVELOP_HUB_LEGACY_ENABLED='false', DEVELOP_HUB_ENV='production', DEVELOP_HUB_DEVICE_MODE='enabled', DEVELOP_HUB_RELEASE=manifest['commit'])
     web_env = dict(old['web']['env'])
     web_env['PATH'] = str(package_path / 'runtime/node/bin') + ':' + web_env.get('PATH', '/usr/bin:/bin')
+    web_env.update(NEXT_PUBLIC_DEVELOP_HUB_ENV='production', NEXT_PUBLIC_DEVELOP_HUB_API_URL=manifest['api_url'])
     return {
         'api': {'argv': [str(package_path / '.venv/bin/python'), '-m', 'uvicorn', 'develop_hub.main:app', '--host', '0.0.0.0', '--port', str(api_port)], 'cwd': str(package_path), 'env': env},
         'web': {'argv': [str(package_path / 'runtime/node/bin/node'), str(package_path / 'web/node_modules/.bin/vinext'), 'start', '--host', '0.0.0.0', '--port', str(web_port)], 'cwd': str(package_path / 'web'), 'env': web_env},
