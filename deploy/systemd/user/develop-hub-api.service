@@ -1,5 +1,5 @@
 [Unit]
-Description=Develop Hub 175 API and Coding Runner
+Description=RK Testing API and Executor
 After=network-online.target
 Wants=network-online.target
 
@@ -8,8 +8,7 @@ Type=simple
 WorkingDirectory=%h/develop-hub
 EnvironmentFile=-%h/develop-hub/.env
 Environment=PYTHONPATH=%h/develop-hub/server/src
-ExecStartPre=%h/develop-hub/.venv/bin/python -m alembic -c server/alembic.ini upgrade head
-ExecStartPre=%h/develop-hub/.venv/bin/python -m develop_hub.seed_test_workbench
+ExecStartPre=%h/develop-hub/.venv/bin/python -m alembic -c server/alembic.ini upgrade testing@head
 ExecStart=%h/develop-hub/.venv/bin/python -m develop_hub.main
 Restart=on-failure
 RestartSec=3

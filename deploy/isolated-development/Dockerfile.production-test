@@ -1,0 +1,12 @@
+ARG TOOLS_IMAGE
+FROM ${TOOLS_IMAGE} AS tools
+FROM python@sha256:6ff506466f8b1e981719b468cc0023b8ef000b983cdec0eafe119d01f379e31d
+COPY --from=tools /toolchain /toolchain
+COPY --from=tools /usr/local/bin/repo /usr/local/bin/repo
+RUN python /toolchain/install-os.py && apt-get install -y --no-install-recommends iproute2 && rm -rf /var/lib/apt/lists/*
+COPY --from=tools /opt/node /opt/node
+COPY requirements/production-cp310-linux-amd64.lock /toolchain/python.lock
+RUN python -m venv /opt/venv && /opt/venv/bin/python -m pip install --only-binary=:all: --require-hashes -r /toolchain/python.lock
+ENV PATH=/opt/venv/bin:/opt/node/bin:$PATH
+ENV PYTHONDONTWRITEBYTECODE=1
+WORKDIR /app

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import os
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import __version__
 from .api import router
 from .codex_runner import CodexRunner
 from .config import settings
@@ -21,13 +23,29 @@ from .test_workbench_api import router as test_workbench_router
 from .workflow import CodingWorkflow
 from .testing_platform import router as testing_platform_router, ScheduleEngine
 from .special_scenarios import router as special_router, SpecialWorkflow
+from .testing.api import router as testing_router
+from .testing.resources_api import router as testing_resources_router
+from .testing.runner import TestingRunner
+
+LEGACY_ENABLED = os.getenv('DEVELOP_HUB_LEGACY_ENABLED', 'false').lower() == 'true'
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+    from .testing.safety import validate_isolated_paths
+    validate_isolated_paths(settings)
     settings.ensure_directories()
     if settings.auto_create_schema:
         initialize_database()
+    testing_runner = TestingRunner(settings)
+    app.state.testing_runner = testing_runner
+    await testing_runner.recover()
+    if not LEGACY_ENABLED:
+        try:
+            yield
+        finally:
+            await testing_runner.stop()
+        return
     runner = CodexRunner(settings, broker)
     remote_qa_runner = RemoteQaRunner(settings)
     qa_plugins = QaPluginRegistry(settings, remote_qa_runner)
@@ -50,14 +68,15 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     try:
         yield
     finally:
+        await testing_runner.stop()
         await scheduler.stop()
         await special_workflow.stop()
 
 
 app = FastAPI(
     title="Develop Hub API",
-    version="0.1.0",
-    description="175 control plane for controlled Codex coding workflows",
+    version=__version__,
+    description="Configurable testing plans for Rockchip devices and firmware",
     lifespan=lifespan,
 )
 app.add_middleware(
@@ -67,12 +86,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.include_router(router)
-app.include_router(qa_router)
-app.include_router(qa_demo_router)
-app.include_router(test_workbench_router)
-app.include_router(testing_platform_router)
-app.include_router(special_router)
+app.include_router(testing_router)
+app.include_router(testing_resources_router)
+if LEGACY_ENABLED:
+    app.include_router(router)
+    app.include_router(qa_router)
+    app.include_router(qa_demo_router)
+    app.include_router(test_workbench_router)
+    app.include_router(testing_platform_router)
+    app.include_router(special_router)
+else:
+    @app.get('/api/health')
+    def testing_health():
+        from .testing.safety import simulation_only
+        return {'status': 'ok', 'service': 'rk-testing', 'legacy_enabled': False, 'environment': settings.environment, 'device_mode': 'simulation-only' if simulation_only() else 'enabled', 'release': os.getenv('DEVELOP_HUB_RELEASE', 'unversioned')}
 
 
 @app.get("/")

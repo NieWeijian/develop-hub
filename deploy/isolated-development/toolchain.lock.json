@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "platform": "linux/amd64",
+  "python_image": "python@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217",
+  "python_version": "3.12.14",
+  "node_version": "22.22.1",
+  "node_url": "https://nodejs.org/dist/v22.22.1/node-v22.22.1-linux-x64.tar.xz",
+  "node_sha256": "9a6bc82f9b491279147219f6a18add1e18424dce90d41d2a5fcd69d4924ba3aa",
+  "npm_version": "10.9.4",
+  "debian_snapshot": "20261014T000000Z",
+  "git_package": "1:2.47.3-0+deb13u1",
+  "gxx_package": "4:14.2.0-1",
+  "repo_launcher_sha256": "98dd0f3c851ab1ffc5fcba7d02656c4d73770d5932767cc8ed376e0c86a805e7"
+}

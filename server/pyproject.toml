@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "develop-hub-server"
-version = "0.1.0"
-description = "175 control plane for Codex-driven software development workflows"
+version = "1.0.0"
+description = "Configurable automated testing for Rockchip devices and firmware"
 requires-python = ">=3.10"
 dependencies = [
   "alembic>=1.13,<2",

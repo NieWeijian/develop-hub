@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "native_python_abi": "cp310",
+  "host_python": "3.10.x",
+  "platform": "linux/amd64",
+  "minimum_glibc": "2.35",
+  "recovery_drill_image": "python@sha256:6ff506466f8b1e981719b468cc0023b8ef000b983cdec0eafe119d01f379e31d"
+}

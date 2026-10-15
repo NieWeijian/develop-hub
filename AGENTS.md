@@ -23,3 +23,26 @@ This repository implements the 175 control plane. Keep orchestration state in th
 - Never auto-merge, publish, delete a worktree, or run a release command without an explicit workflow gate.
 - Keep subprocess working directories inside the registered repository or configured worktree root.
 - Do not log credentials, auth tokens, or the full process environment.
+
+
+## Isolated development environment (2026-10-14)
+
+This is the active platform development checkout. Stable UI 3015/API 8185 and
+`/home/nwj/develop-hub-redesign` must never be edited, rebuilt, or restarted here.
+Use `/home/nwj/develop-hub-dev/ops/manage.py` for builds, tests, and dev restarts.
+Development containers have no network or hardware access, independent dependencies,
+an empty testing database, and simulation-only devices. Keep these restrictions.
+Do not mount production directories, SSH identities, hardware, or the Docker socket.
+Do not provision or reuse production test stations. Real hardware work requires a
+separate authorized test station. SDK code edits must use SSH, never PowerShell/SMB.
+
+
+## Reproducible deployment workflow
+
+Use `deploy/isolated-development/hub.py` or `scripts/bootstrap-dev.py` from committed source.
+See `docs/deployment-rebuild.md`. Application containers must remain network=none.
+Do not copy host Node/Python/npm dependencies into builds. Keep both Python hash locks,
+frontend package-lock, toolchain lock, Docker recipe and tests together in commits.
+Normal development only prepares or activates development releases. Stable apply and
+rollback commands require direct user authorization plus a confirmed maintenance window.
+Never invoke their approval switches as part of CI or ordinary development.

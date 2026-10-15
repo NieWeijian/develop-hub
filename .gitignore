@@ -30,3 +30,36 @@ web/.next/
 
 # Rebuilt from bench/qa-controller.cpp
 /bench/qa-controller
+
+# Private deployment state and downloaded build inputs
+/releases/
+/state/
+/wheelhouse/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.pem
+*.key
+*.ppk
+id_rsa*
+id_ed25519*
+*.tar.gz
+*.tgz
+# Keep reviewed credential-free templates.
+!*.env.example
+!.env.*.example
+
+# Release artifacts and private deployment records
+/runtime-cache/
+/packages/
+*.whl
+*.bundle
+*.plan.json
+*.deployment.json
+/active.json
+/previous.json
+/deployment.json
+/operation.lock
