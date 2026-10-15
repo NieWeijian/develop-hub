@@ -7,11 +7,16 @@ import socket
 
 parser = argparse.ArgumentParser()
 parser.add_argument('kind', choices=['api', 'web'])
+parser.add_argument('--root', required=True)
+parser.add_argument('--port', type=int, required=True)
 args = parser.parse_args()
-root = Path('/home/nwj/develop-hub-dev/var')
+deployment_root = Path(args.root).absolute()
+assert deployment_root.resolve() == deployment_root
+root = deployment_root / 'var'
 assert root.resolve() == root
+assert args.port not in {3000, 3015, 8175, 8185}
 socket_path = root / (args.kind + '.sock')
-port = 8195 if args.kind == 'api' else 3025
+port = args.port
 hop = {'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade'}
 
 class Connection(http.client.HTTPConnection):

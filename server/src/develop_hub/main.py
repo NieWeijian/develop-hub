@@ -99,7 +99,7 @@ else:
     @app.get('/api/health')
     def testing_health():
         from .testing.safety import simulation_only
-        return {'status': 'ok', 'service': 'rk-testing', 'legacy_enabled': False, 'environment': settings.environment, 'device_mode': 'simulation-only' if simulation_only() else 'enabled'}
+        return {'status': 'ok', 'service': 'rk-testing', 'legacy_enabled': False, 'environment': settings.environment, 'device_mode': 'simulation-only' if simulation_only() else 'enabled', 'release': os.getenv('DEVELOP_HUB_RELEASE', 'unversioned')}
 
 
 @app.get("/")
