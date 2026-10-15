@@ -243,6 +243,7 @@ def build_release(root, config, args):
     (source / '.venv').symlink_to('/opt/venv')
     data = release / 'probe-data'
     data.mkdir(mode=0o700)
+    write_json(data / 'test-stations.json', {'schema': 'rk-test-stations/1', 'stations': {}})
     backup_db(root / 'var/testing.db', data / 'testing.db')
     values = environment(config, profile=args.profile, marker=commit)
     if args.profile == 'production':
