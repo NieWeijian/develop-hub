@@ -63,6 +63,18 @@ record = json.loads(record_path.read_text())
 running = record['recovered']
 assert record['status'] == 'manually_rolled_back'
 
+# Corrupted database recovery must restore a fresh file and preserve failed data.
+plan = release.create_plan(package, control, baseline, 8185, 3015)
+plan_path = control / (plan['id'] + '.plan.json')
+release.apply(plan_path, control, base_python)
+record_path = control / (plan['id'] + '.deployment.json')
+record = json.loads(record_path.read_text())
+release.stop(record['new']['api'])
+(data / 'testing.db').write_bytes(b'corrupted-database-for-isolated-drill')
+release.rollback(record_path, control, restore_database=True)
+assert (control / (plan['id'] + '-data-before-restore') / 'testing.db').read_bytes().startswith(b'corrupted-database')
+release.healthy(8185, 3015)
+
 # Now exercise a real candidate startup failure and automatic recovery.
 plan = release.create_plan(package, control, baseline, 8185, 3015)
 plan_path = control / (plan['id'] + '.plan.json')
@@ -80,7 +92,7 @@ else:
 failed = json.loads((control / (plan['id'] + '.deployment.json')).read_text())
 assert failed['status'] == 'rolled_back_after_start_failure'
 release.healthy(8185, 3015)
-result = {'restored_baseline_boot': True, 'historical_runs_readable': recovered_runs, 'historical_plans_readable': recovered_plans, 'production_package_boot': True, 'manual_code_rollback': True, 'failed_candidate_auto_rollback': True, 'network': 'none', 'physical_devices': False, 'package_commit': manifest['commit']}
+result = {'restored_baseline_boot': True, 'historical_runs_readable': recovered_runs, 'historical_plans_readable': recovered_plans, 'production_package_boot': True, 'manual_code_rollback': True, 'corrupted_database_restore': True, 'failed_candidate_auto_rollback': True, 'network': 'none', 'physical_devices': False, 'package_commit': manifest['commit']}
 Path('/drill/result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2))
 print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
 for value in failed['recovered'].values():

@@ -210,7 +210,7 @@ def create_plan(package_path, control, stable_root, api_port, web_port):
     hub.require_idle(database)
     if hub.db_version(database) != manifest['database_schema']:
         raise RuntimeError('Database migration required; stop and arrange a separately reviewed migration/rollback procedure')
-    identifier = str(int(time.time())) + '-' + manifest['commit'][:12]
+    identifier = str(int(time.time())) + '-' + manifest['commit'][:12] + '-' + uuid.uuid4().hex[:8]
     plan = {'schema': 1, 'id': identifier, 'created_at': time.time(), 'package': str(package_path), 'package_hash': hub.sha(package_path / 'package.json'), 'commit': manifest['commit'], 'stable_root': str(stable_root), 'database': str(database), 'database_schema': manifest['database_schema'], 'old': old, 'api_port': api_port, 'web_port': web_port}
     control.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = control / (identifier + '.plan.json')
@@ -286,6 +286,10 @@ def rollback(record_path, control, restore_database=False):
         if listener is not None and (listener != expected['pid'] or not unchanged(expected)):
             raise RuntimeError('Another process owns the deployed port; refusing to stop it')
     database = Path(record['database'])
+    if restore_database:
+        with sqlite3.connect('file:' + record['backup'] + '?mode=ro', uri=True) as backup:
+            if backup.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                raise RuntimeError('Database backup integrity check failed')
     if not restore_database:
         hub.require_idle(database)
         if hub.db_version(database) != record['database_schema']:
@@ -299,7 +303,7 @@ def rollback(record_path, control, restore_database=False):
         for suffix in ['', '-wal', '-shm']:
             file = Path(str(database) + suffix)
             if file.exists():
-                shutil.copy2(file, failed / file.name)
+                file.replace(failed / file.name)
         hub.backup_db(Path(record['backup']), database)
     recovered = {}
     for kind in ['api', 'web']:

@@ -224,3 +224,22 @@ def test_rollback_refuses_an_unrelated_listener_without_signaling_it(tmp_path, m
     with pytest.raises(RuntimeError, match='Another process owns'):
         stable.rollback(file, tmp_path)
     assert calls == []
+
+
+def test_corrupted_database_restore_preserves_failed_file_and_recovers_backup(tmp_path, monkeypatch):
+    database = tmp_path / 'live.db'
+    database.write_bytes(b'corrupted-database')
+    backup = tmp_path / 'backup.db'
+    schema_db(backup)
+    record = {'id': 'test', 'status': 'healthy', 'new': {'api': {'pid': 1, 'dead': True}, 'web': {'pid': 2}}, 'old': {'api': {'tag': 'old-api'}, 'web': {'tag': 'old-web'}}, 'api_port': 8185, 'web_port': 3015, 'database': str(database), 'backup': str(backup), 'database_schema': ['old']}
+    file = tmp_path / 'record.json'
+    file.write_text(json.dumps(record))
+    monkeypatch.setattr(stable, 'pid_on_port', lambda port, allow_missing=False: None if port == 8185 else 2)
+    monkeypatch.setattr(stable, 'unchanged', lambda value: True)
+    monkeypatch.setattr(stable, 'process_alive', lambda value: not value.get('dead', False))
+    monkeypatch.setattr(stable, 'stop', lambda value: None)
+    monkeypatch.setattr(stable, 'launch', lambda value, log: value)
+    monkeypatch.setattr(stable, 'healthy', lambda *args: {'status': 'ok'})
+    stable.rollback(file, tmp_path, restore_database=True)
+    assert hub.db_version(database) == ['old']
+    assert (tmp_path / 'test-data-before-restore/live.db').read_bytes() == b'corrupted-database'

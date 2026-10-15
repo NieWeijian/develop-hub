@@ -96,3 +96,15 @@ python3 deploy/isolated-development/stable_release.py rollback --record <部署�
 - https://nodejs.org/dist/v22.22.1/SHASUMS256.txt
 
 启动阶段的健康检查失败会自动回切；运行后发现业务问题或进程崩溃，需要在维护窗口执行手动回退。回退不会终止其他进程占用的端口，也不会自动恢复未知状态的硬件任务。实际平台的 Git/SSH、SDK、测试台与适配器继续由部署维护，私有配置不进入 Git。
+
+
+## 隔离恢复演练
+
+```sh
+python3 deploy/isolated-development/recovery_drill.py --package <生产候选包目录> --backup-directory <私有备份目录> --root <全新演练目录>
+```
+
+只读取备份压缩文件，并复制到全新演练目录；不挂载原稳定目录、密钥、设备或 Docker socket 到演练容器。
+在 `network=none` 中使用容器自己的 3015/8185，端口不会暴露到宿主机，也不会连接实际平台。
+恢复旧源码、网页构建、依赖、数据库和产物；重建虚拟环境解释器别名和 npm 命令链接；检查历史方案/报告，再执行候选启动、手动回退、数据库损坏恢复及启动失败回切。
+数据库路径仅在副本中重定位，实际业务数据不变。完整演练结果和日志只保存在私有目录，不进入 GitHub。
