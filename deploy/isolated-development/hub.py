@@ -299,20 +299,30 @@ def activate(root, config, release, manifest):
     backups.mkdir(exist_ok=True, mode=0o700)
     backup_db(data / 'testing.db', backups / (manifest['id'] + '.db'))
     retained = []
+    originals = {}
     for kind in ['api', 'web']:
         name = config['name'] + '-' + kind
         if container_exists(name):
-            old = name + '-retained-' + manifest['id'].lower()
-            run(['docker', 'stop', '--time', '25', name])
-            run(['docker', 'rename', name, old])
-            retained.append((name, old))
+            originals[name] = run(['docker', 'inspect', '--format', '{{.Id}}', name], capture=True)
     try:
+        for kind in ['api', 'web']:
+            name = config['name'] + '-' + kind
+            if name in originals:
+                old = name + '-retained-' + uuid.uuid4().hex[:12]
+                run(['docker', 'stop', '--time', '25', name])
+                run(['docker', 'rename', name, old])
+                retained.append((name, old))
         start_pair(release / 'source', data, manifest['image'], environment(config, marker=manifest['commit']), config['name'])
     except Exception:
         for kind in ['api', 'web']:
-            remove(config['name'] + '-' + kind)
+            name = config['name'] + '-' + kind
+            if container_exists(name) and run(['docker', 'inspect', '--format', '{{.Id}}', name], capture=True) != originals.get(name):
+                remove(name)
         for name, old in retained:
             run(['docker', 'rename', old, name])
+            run(['docker', 'start', name])
+        retained_names = {name for name, old in retained}
+        for name in originals.keys() - retained_names:
             run(['docker', 'start', name])
         raise
     if previous:

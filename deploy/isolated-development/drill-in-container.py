@@ -23,7 +23,12 @@ control.mkdir(exist_ok=True)
 hub.require_idle(data / 'testing.db')
 
 # Refresh only the copied virtualenv launcher for this container's CPython 3.10.
-subprocess.run([sys.executable, '-m', 'venv', '--without-pip', str(baseline / '.venv')], check=True)
+for name in ['python', 'python3', 'python3.10']:
+    alias = baseline / '.venv/bin' / name
+    if alias.is_symlink():
+        alias.unlink()
+base_python = str(Path(sys.executable).resolve())
+subprocess.run([base_python, '-m', 'venv', '--without-pip', str(baseline / '.venv')], check=True)
 env = dict(os.environ, DEVELOP_HUB_ROOT=str(baseline), DEVELOP_HUB_DATABASE_URL='sqlite:///' + str(data / 'testing.db'), DEVELOP_HUB_ARTIFACT_ROOT=str(data / 'artifacts'), DEVELOP_HUB_WORKTREE_ROOT=str(data / 'worktrees'), DEVELOP_HUB_QA_PLUGIN_ROOT=str(data / 'plugins'), DEVELOP_HUB_TEST_STATIONS=str(data / 'test-stations.json'), DEVELOP_HUB_LEGACY_ENABLED='false', DEVELOP_HUB_AUTO_CREATE_SCHEMA='false', DEVELOP_HUB_ENV='recovery-drill', DEVELOP_HUB_DEVICE_MODE='simulation-only', DEVELOP_HUB_RELEASE='recovered-baseline', PYTHONPATH=str(baseline / 'server/src'), HOME='/tmp', PYTHONDONTWRITEBYTECODE='1')
 old = {
     'api': {'argv': [str(baseline / '.venv/bin/python'), '-m', 'uvicorn', 'develop_hub.main:app', '--host', '127.0.0.1', '--port', '8185'], 'cwd': str(baseline), 'env': env},
@@ -37,8 +42,6 @@ with urllib.request.urlopen('http://127.0.0.1:8185/api/testing/test-runs') as re
 with urllib.request.urlopen('http://127.0.0.1:8185/api/testing/test-plans') as response:
     recovered_plans = len(json.load(response))
 
-# Only listener discovery is injected: known PIDs are private to this container.
-release.pid_on_port = lambda port: running['api' if port == 8185 else 'web']['pid']
 manifest = release.verify_package(package)
 plan = release.create_plan(package, control, baseline, 8185, 3015)
 plan_path = control / (plan['id'] + '.plan.json')
@@ -50,7 +53,7 @@ def safe_records(*args):
     records['api']['env']['DEVELOP_HUB_DEVICE_MODE'] = 'simulation-only'
     return records
 release.native_records = safe_records
-release.apply(plan_path, control, sys.executable)
+release.apply(plan_path, control, base_python)
 record_path = control / (plan['id'] + '.deployment.json')
 record = json.loads(record_path.read_text())
 assert record['status'] == 'healthy'
@@ -69,7 +72,7 @@ def bad_records(*args):
     return records
 release.native_records = bad_records
 try:
-    release.apply(plan_path, control, sys.executable)
+    release.apply(plan_path, control, base_python)
 except (RuntimeError, FileNotFoundError, ProcessLookupError):
     pass
 else:

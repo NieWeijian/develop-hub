@@ -104,6 +104,40 @@ def test_running_or_waiting_operator_tasks_block_cutover(tmp_path):
         hub.require_idle(path)
 
 
+def test_failed_rename_does_not_delete_an_untouched_old_container(tmp_path, monkeypatch):
+    schema_db(tmp_path / 'var/testing.db')
+    calls = []
+    def command(argv, **kwargs):
+        calls.append(list(argv))
+        if argv[:2] == ['docker', 'inspect']:
+            return 'original-' + argv[-1]
+        if argv[:2] == ['docker', 'rename']:
+            raise RuntimeError('rename failed')
+    monkeypatch.setattr(hub, 'run', command)
+    monkeypatch.setattr(hub, 'container_exists', lambda name: True)
+    config = {'name': 'dhdev-test', 'public_host': 'localhost', 'web_port': 3025, 'api_port': 8195}
+    manifest = {'profile': 'development', 'database_schema': ['old'], 'id': 'test', 'image': 'image', 'commit': 'a' * 40}
+    with pytest.raises(RuntimeError, match='rename failed'):
+        hub.activate(tmp_path, config, tmp_path / 'release', manifest)
+    assert not any(call[:3] == ['docker', 'rm', '-f'] for call in calls)
+    assert ['docker', 'start', 'dhdev-test-api'] in calls
+    assert ['docker', 'start', 'dhdev-test-web'] in calls
+
+
+def test_reactivating_same_release_uses_unique_retention_names(tmp_path, monkeypatch):
+    schema_db(tmp_path / 'var/testing.db')
+    calls = []
+    monkeypatch.setattr(hub, 'run', lambda argv, **kwargs: calls.append(list(argv)))
+    monkeypatch.setattr(hub, 'container_exists', lambda name: True)
+    monkeypatch.setattr(hub, 'start_pair', lambda *args: {'status': 'ok'})
+    config = {'name': 'dhdev-test', 'public_host': 'localhost', 'web_port': 3025, 'api_port': 8195}
+    manifest = {'profile': 'development', 'database_schema': ['old'], 'id': 'test', 'image': 'image', 'commit': 'a' * 40}
+    hub.activate(tmp_path, config, tmp_path / 'release', manifest)
+    hub.activate(tmp_path, config, tmp_path / 'release', manifest)
+    destinations = [call[-1] for call in calls if call[:2] == ['docker', 'rename']]
+    assert len(destinations) == len(set(destinations)) == 4
+
+
 def test_package_tamper_is_detected(tmp_path):
     (tmp_path / 'server.py').write_text('original')
     manifest = {'profile': 'production', 'tests_passed': True, 'frontend_passed': True, 'file_hashes': {'server.py': hub.sha(tmp_path / 'server.py')}}
@@ -161,3 +195,32 @@ def test_failed_stable_candidate_restores_previous_processes(tmp_path, monkeypat
     assert stopped == ['old-web', 'old-api', 'new-api']
     assert launched[-2:] == ['old-api', 'old-web']
     assert json.loads((tmp_path / 'test.deployment.json').read_text())['status'] == 'rolled_back_after_start_failure'
+
+
+def test_crashed_new_api_can_be_rolled_back_when_tasks_are_idle(tmp_path, monkeypatch):
+    database = tmp_path / 'live.db'
+    schema_db(database)
+    record = {'id': 'test', 'status': 'healthy', 'new': {'api': {'pid': 1, 'dead': True}, 'web': {'pid': 2}}, 'old': {'api': {'tag': 'old-api'}, 'web': {'tag': 'old-web'}}, 'api_port': 8185, 'web_port': 3015, 'database': str(database), 'database_schema': ['old']}
+    file = tmp_path / 'record.json'
+    file.write_text(json.dumps(record))
+    monkeypatch.setattr(stable, 'pid_on_port', lambda port, allow_missing=False: None if port == 8185 else 2)
+    monkeypatch.setattr(stable, 'unchanged', lambda value: True)
+    monkeypatch.setattr(stable, 'process_alive', lambda value: not value.get('dead', False))
+    stopped, launched = [], []
+    monkeypatch.setattr(stable, 'stop', lambda value: stopped.append(value['pid']))
+    monkeypatch.setattr(stable, 'launch', lambda value, log: launched.append(value['tag']) or value)
+    monkeypatch.setattr(stable, 'healthy', lambda *args: {'status': 'ok'})
+    stable.rollback(file, tmp_path)
+    assert stopped == [2]
+    assert launched == ['old-api', 'old-web']
+
+
+def test_rollback_refuses_an_unrelated_listener_without_signaling_it(tmp_path, monkeypatch):
+    file = tmp_path / 'record.json'
+    file.write_text(json.dumps({'status': 'healthy', 'new': {'api': {'pid': 1}, 'web': {'pid': 2}}, 'api_port': 8185, 'web_port': 3015}))
+    monkeypatch.setattr(stable, 'pid_on_port', lambda *args, **kwargs: 999)
+    calls = []
+    monkeypatch.setattr(stable, 'stop', lambda *args: calls.append(args))
+    with pytest.raises(RuntimeError, match='Another process owns'):
+        stable.rollback(file, tmp_path)
+    assert calls == []

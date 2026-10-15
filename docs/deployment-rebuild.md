@@ -94,3 +94,5 @@ python3 deploy/isolated-development/stable_release.py rollback --record <部署�
 - https://pip.pypa.io/en/stable/topics/secure-installs/
 - https://docs.docker.com/reference/cli/docker/image/pull/
 - https://nodejs.org/dist/v22.22.1/SHASUMS256.txt
+
+启动阶段的健康检查失败会自动回切；运行后发现业务问题或进程崩溃，需要在维护窗口执行手动回退。回退不会终止其他进程占用的端口，也不会自动恢复未知状态的硬件任务。实际平台的 Git/SSH、SDK、测试台与适配器继续由部署维护，私有配置不进入 Git。

@@ -81,6 +81,7 @@ def verify_package(path):
 
 
 def setup_native(path, python):
+    python = str(Path(python).resolve())
     version = hub.run([python, '-c', 'import sys;print(str(sys.version_info.major)+"."+str(sys.version_info.minor))'], capture=True)
     if version != '3.10' or platform.machine() != 'x86_64' or platform.system() != 'Linux':
         raise RuntimeError('Native production package requires Linux AMD64 and host CPython 3.10')
@@ -101,9 +102,11 @@ def setup_native(path, python):
     hub.run([venv / 'bin/python', '-m', 'pip', 'check'])
 
 
-def pid_on_port(port):
+def pid_on_port(port, allow_missing=False):
     text = hub.run(['ss', '-lntp', 'sport', '=', ':' + str(port)], capture=True)
     values = set(re.findall(r'pid=(\d+)', text))
+    if not values and allow_missing:
+        return None
     if len(values) != 1:
         raise RuntimeError('Expected exactly one listener on port ' + str(port))
     return int(values.pop())
@@ -129,6 +132,14 @@ def unchanged(record):
         current = process_record(record['pid'])
         return current['start_ticks'] == record['start_ticks'] and current['argv'] == record['argv'] and current['cwd'] == record['cwd']
     except (OSError, ProcessLookupError):
+        return False
+
+
+def process_alive(record):
+    try:
+        state = Path('/proc', str(record['pid']), 'stat').read_text().split(') ', 1)[1].split()[0]
+        return state != 'Z' and unchanged(record)
+    except FileNotFoundError:
         return False
 
 
@@ -233,7 +244,7 @@ def apply(plan_path, control, python):
     backup = control / (plan['id'] + '.db')
     hub.backup_db(database, backup)
     record_path = control / (plan['id'] + '.deployment.json')
-    record = dict(plan, backup=str(backup), status='starting', new={})
+    record = dict(plan, backup=str(backup), status='starting', stopped=[], new={})
     hub.write_json(record_path, record)
     record_path.chmod(0o600)
     desired = native_records(path, manifest, plan['old'], plan['api_port'], plan['web_port'])
@@ -242,8 +253,11 @@ def apply(plan_path, control, python):
         for kind in ['web', 'api']:
             stop(plan['old'][kind])
             stopped.append(kind)
+            record['stopped'] = stopped[:]
+            hub.write_json(record_path, record)
         for kind in ['api', 'web']:
             record['new'][kind] = launch(desired[kind], control / (plan['id'] + '-' + kind + '.log'))
+            hub.write_json(record_path, record)
         healthy(plan['api_port'], plan['web_port'], manifest['commit'])
         record['status'] = 'healthy'
     except Exception:
@@ -264,15 +278,21 @@ def apply(plan_path, control, python):
 
 def rollback(record_path, control, restore_database=False):
     record = json.loads(record_path.read_text())
-    if record['status'] != 'healthy' or not all(unchanged(value) for value in record['new'].values()):
-        raise RuntimeError('Deployment identity/status changed; investigate before rollback')
+    if record['status'] != 'healthy':
+        raise RuntimeError('Deployment was interrupted or already recovered; inspect its durable journal before rollback')
+    for kind in ['api', 'web']:
+        listener = pid_on_port(record[kind + '_port'], allow_missing=True)
+        expected = record['new'][kind]
+        if listener is not None and (listener != expected['pid'] or not unchanged(expected)):
+            raise RuntimeError('Another process owns the deployed port; refusing to stop it')
     database = Path(record['database'])
     if not restore_database:
         hub.require_idle(database)
         if hub.db_version(database) != record['database_schema']:
             raise RuntimeError('Cannot roll code back across schema changes')
     for kind in ['web', 'api']:
-        stop(record['new'][kind])
+        if process_alive(record['new'][kind]):
+            stop(record['new'][kind])
     if restore_database:
         failed = control / (record['id'] + '-data-before-restore')
         failed.mkdir(mode=0o700)
