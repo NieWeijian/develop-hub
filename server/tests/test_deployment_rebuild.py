@@ -249,3 +249,28 @@ def test_production_runtime_keeps_candidate_api_address_and_profile(tmp_path):
     records = stable.native_records(tmp_path, {'commit': 'a' * 40, 'api_url': 'https://tests.example/api-root'}, {'api': {'env': {}}, 'web': {'env': {'NEXT_PUBLIC_DEVELOP_HUB_ENV': 'development', 'NEXT_PUBLIC_DEVELOP_HUB_API_URL': 'http://localhost:8195'}}}, 8185, 3015)
     assert records['web']['env']['NEXT_PUBLIC_DEVELOP_HUB_ENV'] == 'production'
     assert records['web']['env']['NEXT_PUBLIC_DEVELOP_HUB_API_URL'] == 'https://tests.example/api-root'
+
+
+def test_launch_retries_transient_proc_permission(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    child = SimpleNamespace(pid=123, poll=lambda: None)
+    monkeypatch.setattr(stable.subprocess, 'Popen', lambda *a, **kw: child)
+    monkeypatch.setattr(stable.time, 'sleep', lambda value: None)
+    calls = []
+    def identity(pid):
+        calls.append(pid)
+        if len(calls) == 1:
+            raise PermissionError('exec in progress')
+        return {'pid': pid, 'argv': ['python']}
+    monkeypatch.setattr(stable, 'process_record', identity)
+    assert stable.launch({'argv': ['python'], 'cwd': str(tmp_path), 'env': {}}, tmp_path / 'log')['pid'] == 123
+    assert len(calls) == 2
+
+
+def test_launch_reports_child_exit_before_proc_read(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    child = SimpleNamespace(pid=123, poll=lambda: 17, returncode=17)
+    monkeypatch.setattr(stable.subprocess, 'Popen', lambda *a, **kw: child)
+    monkeypatch.setattr(stable, 'process_record', lambda pid: pytest.fail('Exited child must not be inspected'))
+    with pytest.raises(RuntimeError, match='exited with code 17'):
+        stable.launch({'argv': ['broken'], 'cwd': str(tmp_path), 'env': {}}, tmp_path / 'log')

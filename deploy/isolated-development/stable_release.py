@@ -50,9 +50,9 @@ def package(root, release_id):
     hub.run(argv + ['-r', '/requirements/production-cp310-linux-amd64.lock', '-d', '/wheels'])
     runtime = destination / 'runtime'
     runtime.mkdir()
-    for source, target in [(cache / 'node', runtime / 'node'), (cache / 'web-node_modules', runtime / 'web-node_modules'), (wheels, runtime / 'wheels')]:
+    for source, target in [(cache / 'node', runtime / 'node'), (cache / 'web-node_modules', runtime / 'node_modules'), (wheels, runtime / 'wheels')]:
         shutil.copytree(source, target, symlinks=True, copy_function=os.link)
-    (destination / 'web/node_modules').symlink_to('../runtime/web-node_modules')
+    (destination / 'web/node_modules').symlink_to('../runtime/node_modules')
     checksums = {}
     for folder, directories, files in os.walk(destination, followlinks=False):
         for name in files:
@@ -162,8 +162,22 @@ def stop(record):
 def launch(record, log):
     with log.open('ab') as output:
         process = subprocess.Popen(record['argv'], cwd=record['cwd'], env=record['env'], stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
-    time.sleep(0.2)
-    return process_record(process.pid)
+    # An exiting or exec'ing child can briefly deny /proc/environ reads.
+    # Keep the Popen child unreaped until identity is recorded or it exits.
+    for _ in range(50):
+        if process.poll() is not None:
+            raise RuntimeError('New process exited with code ' + str(process.returncode) + '; inspect ' + str(log))
+        try:
+            identity = process_record(process.pid)
+            if identity['argv']:
+                return identity
+        except (PermissionError, FileNotFoundError, ProcessLookupError):
+            pass
+        time.sleep(0.1)
+    if process.poll() is None:
+        process.terminate()
+        process.wait(timeout=10)
+    raise RuntimeError('Unable to record newly launched child process identity; inspect ' + str(log))
 
 
 def native_records(package_path, manifest, old, api_port, web_port):
